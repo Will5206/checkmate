@@ -17,6 +17,8 @@ public class Receipt {
 
     private List<ReceiptItem> items;
 
+    private ReceiptSubject subject = new ReceiptSubject();
+
     // Constructor
     public Receipt(int receiptId, int uploadedBy, String merchantName, Date date,
                     float totalAmount, float tipAmount, float taxAmount,
@@ -53,6 +55,18 @@ public class Receipt {
         System.out.println("Item added: " + item.getName());
     }
 
+    //Methods for observer pattern which notifies friends when a receipt is added
+    public void addFriendObserver(FriendObserver friendObserver) {
+        subject.addObserver(friendObserver);
+    }
+
+    public void removeFriendObserver(FriendObserver friendObserver) {
+        subject.removeObserver(friendObserver);
+    }
+
+    public void notifyFriends(String message) {
+        subject.notifyObservers(this, message);
+    }
     public void processOCR() {
         // placeholder for OCR logic
         System.out.println("Processing OCR for receipt " + receiptId);
