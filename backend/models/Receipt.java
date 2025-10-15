@@ -1,4 +1,5 @@
 
+
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -59,5 +60,10 @@ public class Receipt {
 
     public void sendToFriends(List<Integer> friendIds) {
         System.out.println("Sharing receipt " + receiptId + " with friends: " + friendIds);
+    }
+    public String generateShareLink() {
+        String baseUrl = "https://yourapp.com/receipts/";
+        String token = java.util.UUID.randomUUID().toString(); // unique link token
+        return baseUrl + receiptId + "?token=" + token;
     }
 }
