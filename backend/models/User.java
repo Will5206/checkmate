@@ -1,4 +1,3 @@
-package com.checkmate.models;
 
 import java.sql.Timestamp;
 import java.util.UUID;
