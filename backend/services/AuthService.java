@@ -130,7 +130,7 @@ public class AuthService {
             insertStmt.setString(4, phoneNumber);
             insertStmt.setString(5, passwordHash);
             
-            int rowsInserted = insertStmt.executeQuery().getUpdateCount();
+            int rowsInserted = insertStmt.executeUpdate();
             insertStmt.close();
             
             if (rowsInserted > 0) {
