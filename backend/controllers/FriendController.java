@@ -1,6 +1,6 @@
-package com.checkmate.controllers;
+package controllers;
 
-import com.checkmate.services.FriendService;
+import services.FriendService;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import org.json.JSONArray;

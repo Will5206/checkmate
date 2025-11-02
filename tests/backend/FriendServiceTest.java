@@ -1,7 +1,7 @@
-package com.checkmate.tests;
+// Default package (no package declaration)
 
-import com.checkmate.models.Friend;
-import com.checkmate.services.FriendService;
+import models.Friend;
+import services.FriendService;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

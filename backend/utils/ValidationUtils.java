@@ -1,4 +1,4 @@
-package com.checkmate.utils;
+package utils;
 
 import java.util.regex.Pattern;
 

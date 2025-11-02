@@ -1,8 +1,8 @@
-package com.checkmate.tests;
+// Default package (no package declaration)
 
 
 
-import com.checkmate.database.DatabaseConnection;
+import database.DatabaseConnection;
 import java.sql.Connection;
 
 

@@ -1,3 +1,6 @@
+package patterns;
+
+import models.Receipt;
 import java.util.ArrayList;
 import java.util.List;
 

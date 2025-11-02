@@ -1,3 +1,7 @@
+package patterns;
+
+import models.Receipt;
+
 //Make a new observer class using the ReceiptObserver interface
 //This observer will represent a friend who gets notified when a receipt is added to the user's account
 

@@ -1,8 +1,8 @@
-package com.checkmate;
+// No package (default package)
 
-import com.checkmate.controllers.AuthController;
-import com.checkmate.controllers.FriendController;
-import com.checkmate.database.DatabaseConnection;
+import controllers.AuthController;
+import controllers.FriendController;
+import database.DatabaseConnection;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;

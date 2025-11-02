@@ -1,4 +1,4 @@
-
+package models;
 
 public class ReceiptItem {
     private int itemId;

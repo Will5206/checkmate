@@ -1,6 +1,6 @@
-package com.checkmate.services;
+package services;
 
-import com.checkmate.models.Friend;
+import models.Friend;
 
 import java.util.*;
 

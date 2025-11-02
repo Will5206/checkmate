@@ -1,7 +1,7 @@
-package com.checkmate.controllers;
+package controllers;
 
-import com.checkmate.models.User;
-import com.checkmate.services.AuthService;
+import models.User;
+import services.AuthService;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import org.json.JSONObject;

@@ -1,8 +1,8 @@
-package com.checkmate.services;
+package services;
 
-import com.checkmate.database.DatabaseConnection;
-import com.checkmate.models.User;
-import com.checkmate.utils.ValidationUtils;
+import database.DatabaseConnection;
+import models.User;
+import utils.ValidationUtils;
 
 import java.sql.*;
 import java.util.UUID;
