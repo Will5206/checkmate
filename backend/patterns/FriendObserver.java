@@ -12,6 +12,10 @@ public class FriendObserver implements ReceiptObserver {
         this.friendId = friendId;
     }
 
+    public int getFriendId() {
+        return friendId;
+    }
+
     @Override
     public void update(Receipt receipt, String message) {
         System.out.println("Friend " + friendId + " notified: " + message + 
