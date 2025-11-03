@@ -29,9 +29,16 @@ import java.util.List;
 public class ReceiptNotificationService {
 
     private final FriendService friendService;
+    private final ReceiptService receiptService;
 
     public ReceiptNotificationService(FriendService friendService) {
         this.friendService = friendService;
+        this.receiptService = ReceiptService.getInstance();
+    }
+
+    public ReceiptNotificationService(FriendService friendService, ReceiptService receiptService) {
+        this.friendService = friendService;
+        this.receiptService = receiptService;
     }
 
     /**
@@ -120,6 +127,11 @@ public class ReceiptNotificationService {
             List<Integer> friendIds = friendService.listFriends(userId);
             receipt.sendToFriends(friendIds);
             
+            // Add receipt to each friend's pending receipts list
+            for (Integer friendId : friendIds) {
+                receiptService.addPendingReceipt(friendId, receipt);
+            }
+            
             // Trigger notifications via observer pattern
             String message = "Receipt from " + receipt.getMerchantName() + 
                            " for $" + receipt.getTotalAmount() + 
@@ -152,6 +164,11 @@ public class ReceiptNotificationService {
             }
             
             receipt.sendToFriends(validFriendIds);
+            
+            // Add receipt to each friend's pending receipts list
+            for (Integer friendId : validFriendIds) {
+                receiptService.addPendingReceipt(friendId, receipt);
+            }
             
             // Trigger notifications via observer pattern
             String message = "Receipt from " + receipt.getMerchantName() + 
