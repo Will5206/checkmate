@@ -1,9 +1,17 @@
-# checkmate
-Project for Software Studio
+# Receipts Folder
 
+This folder contains test receipt images for the receipt parser.
 
-## Folder Structure
-- `docs/` - Documentation and diagrams
-- `frontend/` - UI code (pages and components)
-- `backend/` - Server-side Java code
-- `scripts/` - Python OCR processing
+## Usage
+
+Place your receipt image files (PNG, JPG, etc.) in this folder.
+
+The receipt parser script (`reciept_parser_local.py`) looks for images in this directory.
+
+## Example
+
+To test with a receipt image:
+1. Place your receipt image file here (e.g., `example_rec_3.png`)
+2. Update the filename in `reciept_parser_local.py` if needed
+3. Run the script
+
