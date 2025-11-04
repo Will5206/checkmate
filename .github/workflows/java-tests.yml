@@ -33,6 +33,7 @@ jobs:
         java-version: '11'
         distribution: 'temurin'
         cache: maven
+        dependency-submission: false
 
     - name: Install MySQL client
       run: |

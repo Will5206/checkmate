@@ -53,7 +53,7 @@ CREATE INDEX idx_sessions_token ON sessions(token);
 CREATE INDEX idx_sessions_user_id ON sessions(user_id);
 
 -- -----
--- balance_history table for tracking balance changes over time  --\(`U`)/--
+-- balance_history table for tracking balance changes over time
 CREATE TABLE IF NOT EXISTS balance_history (
     history_id INT AUTO_INCREMENT PRIMARY KEY,
     user_id VARCHAR(36) NOT NULL,
