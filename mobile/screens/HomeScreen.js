@@ -3,6 +3,8 @@ import React, { useState } from 'react';
 import { View, Text, Image, TouchableOpacity, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
+// bringing in nav bar
+import BottomNavBar from '../components/BottomNavBar';
 
 export default function HomeScreen() {
   const [imageUri, setImageUri] = useState(null);
@@ -42,35 +44,49 @@ export default function HomeScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      {!imageUri ? (
-        <>
-          <Text style={styles.title}>Scan Receipt</Text>
-          <TouchableOpacity style={styles.button} onPress={handlePickImage}>
-            <Text style={styles.buttonText}>Choose Receipt Photo</Text>
-          </TouchableOpacity>
-        </>
-      ) : (
-        <>
-          <Image source={{ uri: imageUri }} style={styles.preview} />
-          <TouchableOpacity style={styles.button} onPress={handleProcess}>
-            {isProcessing ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text style={styles.buttonText}>Process & Split Bill</Text>
-            )}
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setImageUri(null)}>
-            <Text style={styles.reset}>Reset</Text>
-          </TouchableOpacity>
-        </>
-      )}
+    <View style={styles.wrapper}>
+      <View style={styles.container}>
+        {!imageUri ? (
+          <>
+            <Text style={styles.title}>Scan Receipt</Text>
+            <TouchableOpacity style={styles.button} onPress={handlePickImage}>
+              <Text style={styles.buttonText}>Choose Receipt Photo</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <Image source={{ uri: imageUri }} style={styles.preview} />
+            <TouchableOpacity style={styles.button} onPress={handleProcess}>
+              {isProcessing ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text style={styles.buttonText}>Process & Split Bill</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setImageUri(null)}>
+              <Text style={styles.reset}>Reset</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+      <BottomNavBar />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20, backgroundColor: '#f9fafb' },
+  wrapper: {
+    flex: 1,
+    backgroundColor: '#f9fafb',
+  },
+  container: { 
+    flex: 1, 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    padding: 20, 
+    paddingBottom: 100, // Space for bottom nav bar
+    backgroundColor: '#f9fafb' 
+  },
   title: { fontSize: 24, fontWeight: '700', marginBottom: 20 },
   button: { backgroundColor: '#059669', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
   buttonText: { color: 'white', fontWeight: '600' },

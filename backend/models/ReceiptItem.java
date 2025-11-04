@@ -17,5 +17,10 @@ public class ReceiptItem {
         this.category = category;
     }
 
+    public int getItemId() { return itemId; }
+    public int getReceiptId() { return receiptId; }
     public String getName() { return name; }
+    public float getPrice() { return price; }
+    public int getQuantity() { return quantity; }
+    public String getCategory() { return category; }
 }

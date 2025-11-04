@@ -47,6 +47,7 @@ public class Receipt {
     public float getTaxAmount() { return taxAmount; }
     public String getImageUrl() { return imageUrl; }
     public String getStatus() { return status; }
+    public List<ReceiptItem> getItems() { return new ArrayList<>(items); }
 
     // Setters
     public void setStatus(String status) { this.status = status; }
