@@ -53,7 +53,9 @@ jobs:
 
     - name: Create database schema
       run: |
-        mysql -h 127.0.0.1 -P 3306 -u root -ppassword checkmate_db < backend/database/schema.sql
+        mysql -h 127.0.0.1 -P 3306 -u root -ppassword checkmate_db << 'EOF'
+        $(cat backend/database/schema.sql)
+        EOF
       continue-on-error: false
 
     - name: Create test user for BalanceServiceTest

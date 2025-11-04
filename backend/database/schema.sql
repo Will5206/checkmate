@@ -22,7 +22,7 @@ CREATE INDEX idx_users_phone ON users(phone_number);
 
 
 -- -----
---friends relationship table (for future sprints)
+-- friends relationship table (for future sprints)
 CREATE TABLE IF NOT EXISTS friendships (
     friendship_id INT AUTO_INCREMENT PRIMARY KEY,
     user_id_1 VARCHAR(36) NOT NULL,
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS friendships (
 --
 --
 --
---sessions table for login management
+-- sessions table for login management
 CREATE TABLE IF NOT EXISTS sessions (
     session_id VARCHAR(36) PRIMARY KEY,
     user_id VARCHAR(36) NOT NULL,
