@@ -1,0 +1,83 @@
+name: Java Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: checkmate_db
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        cache: maven
+
+    - name: Install MySQL client
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y mysql-client
+
+    - name: Wait for MySQL to be ready
+      run: |
+        for i in {1..30}; do
+          if mysqladmin ping -h"127.0.0.1" -P3306 -uroot -ppassword --silent; then
+            echo "MySQL is ready!"
+            break
+          fi
+          echo "Waiting for MySQL... ($i/30)"
+          sleep 2
+        done
+
+    - name: Create database schema
+      run: |
+        mysql -h 127.0.0.1 -P 3306 -u root -ppassword checkmate_db < backend/database/schema.sql
+      continue-on-error: false
+
+    - name: Create test user for BalanceServiceTest
+      run: |
+        mysql -h 127.0.0.1 -P 3306 -u root -ppassword checkmate_db -e "
+        INSERT INTO users (user_id, name, email, phone_number, password_hash, balance) 
+        VALUES ('test-user-ci-123', 'CI Test User', 'ci-test@example.com', '5551234567', 'test-hash', 0.00)
+        ON DUPLICATE KEY UPDATE balance=0.00;
+        "
+
+    - name: Run Maven tests
+      run: mvn test
+      env:
+        # In a real scenario, you'd use GitHub secrets for these
+        # For now, these match DatabaseConnection defaults
+        MYSQL_HOST: 127.0.0.1
+        MYSQL_PORT: 3306
+        MYSQL_USER: root
+        MYSQL_PASSWORD: password
+        MYSQL_DATABASE: checkmate_db
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: target/surefire-reports/
+
