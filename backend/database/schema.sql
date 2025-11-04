@@ -73,3 +73,29 @@ CREATE INDEX idx_balance_history_user_id ON balance_history(user_id);
 CREATE INDEX idx_balance_history_created_at ON balance_history(created_at);
 CREATE INDEX idx_balance_history_type ON balance_history(transaction_type);
 CREATE INDEX idx_balance_history_reference ON balance_history(reference_type, reference_id);
+
+-- -----
+-- transactions table for tracking all financial transactions between users
+CREATE TABLE IF NOT EXISTS transactions (
+    transaction_id INT AUTO_INCREMENT PRIMARY KEY,
+    from_user_id VARCHAR(36) NOT NULL,
+    to_user_id VARCHAR(36),
+    amount DECIMAL(10, 2) NOT NULL,
+    transaction_type ENUM('receipt_payment', 'pot_contribution', 'pot_withdrawal', 'peer_to_peer', 'refund', 'other') NOT NULL,
+    description VARCHAR(500),
+    status ENUM('pending', 'completed', 'failed', 'cancelled') DEFAULT 'pending',
+    related_entity_id VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (from_user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (to_user_id) REFERENCES users(user_id) ON DELETE SET NULL,
+    CHECK (amount > 0)
+);
+
+-- indexes for faster lookups
+CREATE INDEX idx_transactions_from_user ON transactions(from_user_id);
+CREATE INDEX idx_transactions_to_user ON transactions(to_user_id);
+CREATE INDEX idx_transactions_status ON transactions(status);
+CREATE INDEX idx_transactions_type ON transactions(transaction_type);
+CREATE INDEX idx_transactions_created_at ON transactions(created_at);
+CREATE INDEX idx_transactions_related_entity ON transactions(related_entity_id);
