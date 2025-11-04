@@ -9,15 +9,15 @@ export default function BottomNavBar() {
 
   const navigationItems = [
     {
-      name: 'Pots',
-      screen: 'GroupPots', //  update this later
-      icon: 'trophy-outline',
+      name: 'Pending',
+      screen: 'Pending',
+      icon: 'timer-outline',
       activeIcon: 'trophy',
     },
     {
-      name: 'Friends',
-      screen: 'Friends', 
-      icon: 'people-outline',
+      name: 'Activity',
+      screen: 'Activity', 
+      icon: 'time-outline',
       activeIcon: 'people',
     },
     {
@@ -28,9 +28,9 @@ export default function BottomNavBar() {
       isCenter: true,
     },
     {
-      name: 'Activity',
-      screen: 'Activity',  
-      icon: 'time-outline',
+      name: 'Friends',
+      screen: 'Friends',  
+      icon: 'people-outline',
       activeIcon: 'time',
     },
     {
