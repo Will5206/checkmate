@@ -6,6 +6,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import LoginScreen from './screens/LoginScreen';
 import SignupScreen from './screens/SignupScreen';
 import HomeScreen from './screens/HomeScreen';
+import ActivityScreen from './screens/ActivityScreen';
 import BottomNavBar from './components/BottomNavBar';
 
 const Stack = createNativeStackNavigator();
@@ -22,9 +23,9 @@ function PlaceholderScreen({ screenName }) {
   );
 }
 
-function PastActivityScreen() {
-  return <PlaceholderScreen screenName="PastActivity" />;
-}
+// function PastActivityScreen() {
+//   return <PlaceholderScreen screenName="PastActivity" />;
+// }
 
 function FriendsScreen() {
   return <PlaceholderScreen screenName="Friends" />;
@@ -52,7 +53,7 @@ export default function App() {
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="Signup" component={SignupScreen} />
         <Stack.Screen name="Home" component={HomeScreen} />
-        <Stack.Screen name="PastActivity" component={PastActivityScreen} />
+        <Stack.Screen name="Activity" component={ActivityScreen} />
         <Stack.Screen name="Friends" component={FriendsScreen} />
         <Stack.Screen name="ScanReceipt" component={ScanReceiptScreen} />
         <Stack.Screen name="Pending" component={PendingScreen} />
