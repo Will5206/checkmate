@@ -1,268 +1,158 @@
 package controllers;
 
-import services.ReceiptService;
-import models.Receipt;
-import models.ReceiptItem;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
-import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.IOException;
-import java.io.OutputStream;
-import java.net.URI;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.UUID;
 
-/**
- * Controller for handling receipt viewing and acceptance/decline operations.
- * Provides endpoints for users to view receipts sent to them and accept or decline them.
- */
-public class ReceiptController {
-
-    private static final ReceiptService receiptService = ReceiptService.getInstance();
-
-    /**
-     * Handler for viewing a receipt by ID.
-     * GET /api/receipts/view?receiptId=X&userId=Y
-     */
-    public static class ViewReceiptHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            addCors(exchange);
-            if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(200, -1);
-                return;
-            }
-            if (!"GET".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
-                return;
-            }
-            
-            Map<String, String> query = parseQuery(exchange.getRequestURI());
-            try {
-                int userId = Integer.parseInt(query.getOrDefault("userId", ""));
-                int receiptId = Integer.parseInt(query.getOrDefault("receiptId", ""));
-                
-                Receipt receipt = receiptService.getReceipt(userId, receiptId);
-                
-                if (receipt == null) {
-                    sendJson(exchange, 404, new JSONObject()
-                        .put("success", false)
-                        .put("message", "Receipt not found"));
-                    return;
-                }
-                
-                // Build receipt JSON with all details including items
-                JSONObject receiptJson = buildReceiptJson(receipt);
-                receiptJson.put("status", receiptService.getReceiptStatus(userId, receiptId));
-                
-                JSONObject resp = new JSONObject()
-                    .put("success", true)
-                    .put("receipt", receiptJson);
-                
-                sendJson(exchange, 200, resp);
-            } catch (Exception e) {
-                sendJson(exchange, 400, new JSONObject()
-                    .put("success", false)
-                    .put("message", "Invalid parameters: " + e.getMessage()));
-            }
-        }
-    }
-
-    /**
-     * Handler for listing all pending receipts for a user.
-     * GET /api/receipts/pending?userId=X
-     */
-    public static class ListPendingReceiptsHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            addCors(exchange);
-            if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(200, -1);
-                return;
-            }
-            if (!"GET".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
-                return;
-            }
-            
-            Map<String, String> query = parseQuery(exchange.getRequestURI());
-            try {
-                int userId = Integer.parseInt(query.getOrDefault("userId", ""));
-                
-                List<Receipt> pendingReceipts = receiptService.getPendingReceipts(userId);
-                JSONArray receiptsArray = new JSONArray();
-                
-                for (Receipt receipt : pendingReceipts) {
-                    JSONObject receiptJson = buildReceiptJson(receipt);
-                    receiptJson.put("status", receiptService.getReceiptStatus(userId, receipt.getReceiptId()));
-                    receiptsArray.put(receiptJson);
-                }
-                
-                JSONObject resp = new JSONObject()
-                    .put("success", true)
-                    .put("userId", userId)
-                    .put("receipts", receiptsArray);
-                
-                sendJson(exchange, 200, resp);
-            } catch (Exception e) {
-                sendJson(exchange, 400, new JSONObject()
-                    .put("success", false)
-                    .put("message", "Invalid parameters: " + e.getMessage()));
-            }
-        }
-    }
-
-    /**
-     * Handler for accepting a receipt.
-     * POST /api/receipts/accept?receiptId=X&userId=Y
-     */
-    public static class AcceptReceiptHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            addCors(exchange);
-            if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(200, -1);
-                return;
-            }
-            if (!"POST".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
-                return;
-            }
-            
-            Map<String, String> query = parseQuery(exchange.getRequestURI());
-            try {
-                int userId = Integer.parseInt(query.getOrDefault("userId", ""));
-                int receiptId = Integer.parseInt(query.getOrDefault("receiptId", ""));
-                
-                boolean accepted = receiptService.acceptReceipt(userId, receiptId);
-                
-                if (!accepted) {
-                    sendJson(exchange, 400, new JSONObject()
-                        .put("success", false)
-                        .put("message", "Receipt could not be accepted. It may not exist, be already processed, or not be accessible."));
-                    return;
-                }
-                
-                JSONObject resp = new JSONObject()
-                    .put("success", true)
-                    .put("message", "Receipt accepted successfully")
-                    .put("userId", userId)
-                    .put("receiptId", receiptId);
-                
-                sendJson(exchange, 200, resp);
-            } catch (Exception e) {
-                sendJson(exchange, 400, new JSONObject()
-                    .put("success", false)
-                    .put("message", "Invalid parameters: " + e.getMessage()));
-            }
-        }
-    }
-
-    /**
-     * Handler for declining a receipt.
-     * POST /api/receipts/decline?receiptId=X&userId=Y
-     */
-    public static class DeclineReceiptHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            addCors(exchange);
-            if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(200, -1);
-                return;
-            }
-            if (!"POST".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
-                return;
-            }
-            
-            Map<String, String> query = parseQuery(exchange.getRequestURI());
-            try {
-                int userId = Integer.parseInt(query.getOrDefault("userId", ""));
-                int receiptId = Integer.parseInt(query.getOrDefault("receiptId", ""));
-                
-                boolean declined = receiptService.declineReceipt(userId, receiptId);
-                
-                if (!declined) {
-                    sendJson(exchange, 400, new JSONObject()
-                        .put("success", false)
-                        .put("message", "Receipt could not be declined. It may not exist, be already processed, or not be accessible."));
-                    return;
-                }
-                
-                JSONObject resp = new JSONObject()
-                    .put("success", true)
-                    .put("message", "Receipt declined successfully")
-                    .put("userId", userId)
-                    .put("receiptId", receiptId);
-                
-                sendJson(exchange, 200, resp);
-            } catch (Exception e) {
-                sendJson(exchange, 400, new JSONObject()
-                    .put("success", false)
-                    .put("message", "Invalid parameters: " + e.getMessage()));
-            }
-        }
-    }
-
-    /**
-     * Helper method to build a JSON object from a Receipt model.
-     */
-    private static JSONObject buildReceiptJson(Receipt receipt) {
-        JSONObject receiptJson = new JSONObject()
-            .put("receiptId", receipt.getReceiptId())
-            .put("uploadedBy", receipt.getUploadedBy())
-            .put("merchantName", receipt.getMerchantName())
-            .put("date", receipt.getDate().getTime())
-            .put("totalAmount", receipt.getTotalAmount())
-            .put("tipAmount", receipt.getTipAmount())
-            .put("taxAmount", receipt.getTaxAmount())
-            .put("imageUrl", receipt.getImageUrl())
-            .put("status", receipt.getStatus());
-        
-        // Add items array
-        JSONArray itemsArray = new JSONArray();
-        for (ReceiptItem item : receipt.getItems()) {
-            JSONObject itemJson = new JSONObject()
-                .put("itemId", item.getItemId())
-                .put("receiptId", item.getReceiptId())
-                .put("name", item.getName())
-                .put("price", item.getPrice())
-                .put("quantity", item.getQuantity())
-                .put("category", item.getCategory());
-            itemsArray.put(itemJson);
-        }
-        receiptJson.put("items", itemsArray);
-        
-        return receiptJson;
-    }
-
-    private static Map<String, String> parseQuery(URI uri) {
-        String query = uri.getQuery();
-        if (query == null || query.isEmpty()) {
-            return Map.of();
-        }
-        return java.util.Arrays.stream(query.split("&"))
-                .map(kv -> kv.split("=", 2))
-                .collect(Collectors.toMap(
-                        kv -> kv[0],
-                        kv -> kv.length > 1 ? kv[1] : ""
-                ));
-    }
-
-    private static void addCors(HttpExchange exchange) {
+public class ReceiptController implements HttpHandler {
+    private static final String UPLOAD_DIR = "receipts/";
+    private static final String PYTHON_SCRIPT = "reciept_parser_local.py";
+    
+    @Override
+    public void handle(HttpExchange exchange) throws IOException {
+        // Enable CORS
         exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
-        exchange.getResponseHeaders().add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        exchange.getResponseHeaders().add("Access-Control-Allow-Methods", "POST, OPTIONS");
         exchange.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type");
+        
+        if ("OPTIONS".equals(exchange.getRequestMethod())) {
+            exchange.sendResponseHeaders(200, -1);
+            return;
+        }
+        
+        if (!"POST".equals(exchange.getRequestMethod())) {
+            sendResponse(exchange, 405, "{\"success\": false, \"message\": \"Method not allowed\"}");
+            return;
+        }
+        
+        Path tempPath = null;
+        try {
+            System.out.println("[ReceiptController] Received receipt parse request");
+            
+            // Read image from request body (simplified - reads raw bytes)
+            byte[] imageData = exchange.getRequestBody().readAllBytes();
+            System.out.println("[ReceiptController] Read " + imageData.length + " bytes of image data");
+            
+            if (imageData.length == 0) {
+                sendResponse(exchange, 400, "{\"success\": false, \"message\": \"No image data received\"}");
+                return;
+            }
+            
+            // Save to temp file
+            String filename = "temp_" + UUID.randomUUID().toString() + ".jpg";
+            tempPath = Paths.get(UPLOAD_DIR, filename);
+            Files.createDirectories(tempPath.getParent());
+            Files.write(tempPath, imageData);
+            System.out.println("[ReceiptController] Saved image to: " + tempPath.toString());
+            
+            // Call Python parser - use absolute path to project root
+            String projectRoot = System.getProperty("user.dir");
+            File projectRootFile = new File(projectRoot);
+            File pythonScriptFile = new File(projectRootFile, PYTHON_SCRIPT);
+            
+            System.out.println("[ReceiptController] Calling Python parser: " + pythonScriptFile.getAbsolutePath());
+            System.out.println("[ReceiptController] Working directory: " + projectRoot);
+            System.out.println("[ReceiptController] Image path: " + tempPath.toAbsolutePath());
+            
+            ProcessBuilder pb = new ProcessBuilder(
+                "python3",
+                pythonScriptFile.getAbsolutePath(),
+                tempPath.toAbsolutePath().toString()
+            );
+            pb.directory(projectRootFile);
+            // do NOT redirect error stream; keep stdout and stderr separate
+            Process process = pb.start();
+            System.out.println("[ReceiptController] Python process started, waiting for output...");
+            
+            // Read stdout (JSON)
+            BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)
+            );
+            StringBuilder output = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                System.out.println("[ReceiptController] Python stdout: " + line);
+                // keep only the last line, expected to be the JSON
+                output.setLength(0);
+                output.append(line);
+            }
+            
+            // Read stderr (warnings, debug)
+            BufferedReader errorReader = new BufferedReader(
+                new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8)
+            );
+            StringBuilder errorOutput = new StringBuilder();
+            String errorLine;
+            while ((errorLine = errorReader.readLine()) != null) {
+                errorOutput.append(errorLine).append("\n");
+                System.err.println("[ReceiptController] Python stderr: " + errorLine);
+            }
+            
+            System.out.println("[ReceiptController] Waiting for Python process to complete...");
+            int exitCode = process.waitFor();
+            System.out.println("[ReceiptController] Python process exited with code: " + exitCode);
+            
+            // Clean up temp file
+            if (tempPath != null) {
+                Files.deleteIfExists(tempPath);
+                System.out.println("[ReceiptController] Cleaned up temp file");
+            }
+            
+            if (exitCode != 0) {
+                System.err.println("[ReceiptController] Python script failed with exit code: " + exitCode);
+                System.err.println("[ReceiptController] Python error output: " + errorOutput.toString());
+                sendResponse(exchange, 500, "{\"success\": false, \"message\": \"Error reading receipt. Python script failed: " + exitCode + "\"}");
+                return;
+            }
+            
+            // Parse Python output (should be pure JSON on stdout)
+            String pythonOutput = output.toString().trim();
+            System.out.println("[ReceiptController] Parsing Python output (length: " + pythonOutput.length() + ")");
+            System.out.println("[ReceiptController] Raw Python output:");
+            System.out.println(pythonOutput);
+            
+            JSONObject receiptData = new JSONObject(pythonOutput);
+            System.out.println("[ReceiptController] Successfully parsed receipt data");
+            
+            // Build response
+            JSONObject response = new JSONObject();
+            response.put("success", true);
+            response.put("merchant", receiptData.optString("merchant", "Unknown"));
+            response.put("date", receiptData.optString("date", ""));
+            response.put("items", receiptData.optJSONArray("items"));
+            response.put("subtotal", receiptData.optDouble("subtotal", 0));
+            response.put("tax", receiptData.optDouble("tax", 0));
+            response.put("total", receiptData.optDouble("total", 0));
+            
+            sendResponse(exchange, 200, response.toString());
+            
+        } catch (Exception e) {
+            // Clean up temp file on error
+            if (tempPath != null) {
+                try {
+                    Files.deleteIfExists(tempPath);
+                } catch (Exception ignored) {}
+            }
+            
+            e.printStackTrace();
+            JSONObject response = new JSONObject();
+            response.put("success", false);
+            response.put("message", "Error reading receipt: " + e.getMessage());
+            sendResponse(exchange, 500, response.toString());
+        }
     }
-
-    private static void sendJson(HttpExchange exchange, int status, JSONObject json) throws IOException {
-        byte[] bytes = json.toString().getBytes(StandardCharsets.UTF_8);
+    
+    private void sendResponse(HttpExchange exchange, int statusCode, String response) throws IOException {
         exchange.getResponseHeaders().set("Content-Type", "application/json");
-        exchange.sendResponseHeaders(status, bytes.length);
+        byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
+        exchange.sendResponseHeaders(statusCode, bytes.length);
         OutputStream os = exchange.getResponseBody();
         os.write(bytes);
         os.close();
