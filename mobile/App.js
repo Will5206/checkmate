@@ -6,7 +6,6 @@ import LoginScreen from './screens/LoginScreen';
 import SignupScreen from './screens/SignupScreen';
 import HomeScreen from './screens/HomeScreen';
 import BillReview from './screens/BillReview';
-import PendingTransactionsScreen from './screens/PendingTransactionsScreen';
 import ActivityScreen from './screens/ActivityScreen';
 import BottomNavBar from './components/BottomNavBar';
 
@@ -40,7 +39,7 @@ function ScanReceiptScreen() {
 export default function App() {
   return (
     <NavigationContainer>
-      <Stack.Navigator 
+      <Stack.Navigator
         initialRouteName="Login"
         screenOptions={{
           headerShown: false,
@@ -55,7 +54,6 @@ export default function App() {
         <Stack.Screen name="GroupPots" component={GroupPotsScreen} />
         <Stack.Screen name="Friends" component={FriendsScreen} />
         <Stack.Screen name="ScanReceipt" component={ScanReceiptScreen} />
-        <Stack.Screen name="Pending" component={PendingTransactionsScreen} />
         <Stack.Screen name="Activity" component={ActivityScreen} />
       </Stack.Navigator>
     </NavigationContainer>

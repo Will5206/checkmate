@@ -50,10 +50,11 @@ bin/
 *.log
 logs/
 
-# Environment
+# Environment - Never commit these!
 .env
 .env.local
 .env.production
+env/
 
 # OS
 .DS_Store
