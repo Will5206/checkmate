@@ -21,8 +21,8 @@ public class ReceiptNotificationServiceTest {
 
     static class MockFriendService extends FriendService {
         @Override
-        public List<Integer> listFriends(int userId) {
-            return Arrays.asList(2, 3, 4);
+        public List<String> listFriends(String userId) {
+            return Arrays.asList("2", "3", "4");
         }
     }
 
@@ -108,14 +108,14 @@ public class ReceiptNotificationServiceTest {
     void testEnableReceiptNotifications_emptyFriendsList() {
         MockFriendService emptyFriendService = new MockFriendService() {
             @Override
-            public List<Integer> listFriends(int userId) {
+            public List<String> listFriends(String userId) {
                 return Collections.emptyList();
             }
         };
         ReceiptNotificationService service = new ReceiptNotificationService(emptyFriendService);
-        
+
         int count = service.enableReceiptNotifications(mockReceipt, 1);
-        
+
         assertEquals(0, count);
         assertEquals(0, mockReceipt.getObserverCount());
     }

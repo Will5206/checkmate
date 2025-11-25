@@ -4,13 +4,13 @@ import java.util.Date;
 
 public class Friend {
     private int friendshipId;
-    private int userId1;
-    private int userId2;
+    private String userId1;
+    private String userId2;
     private Date createdAt;
     private String status;
 
     // Constructor
-    public Friend(int friendshipId, int userId1, int userId2, Date createdAt, String status) {
+    public Friend(int friendshipId, String userId1, String userId2, Date createdAt, String status) {
         this.friendshipId = friendshipId;
         this.userId1 = userId1;
         this.userId2 = userId2;
@@ -20,8 +20,8 @@ public class Friend {
 
     // Getters
     public int getFriendshipId() { return friendshipId; }
-    public int getUserId1() { return userId1; }
-    public int getUserId2() { return userId2; }
+    public String getUserId1() { return userId1; }
+    public String getUserId2() { return userId2; }
     public Date getCreatedAt() { return createdAt; }
     public String getStatus() { return status; }
 

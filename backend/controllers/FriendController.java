@@ -32,8 +32,14 @@ public class FriendController {
             }
             Map<String, String> query = parseQuery(exchange.getRequestURI());
             try {
-                int userId = Integer.parseInt(query.getOrDefault("userId", ""));
-                int friendId = Integer.parseInt(query.getOrDefault("friendId", ""));
+                String userId = query.getOrDefault("userId", "");
+                String friendId = query.getOrDefault("friendId", "");
+
+                if (userId.isEmpty() || friendId.isEmpty()) {
+                    sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "userId and friendId are required"));
+                    return;
+                }
+
                 boolean added = friendService.addFriend(userId, friendId);
                 JSONObject resp = new JSONObject()
                         .put("success", true)
@@ -42,7 +48,7 @@ public class FriendController {
                         .put("friendId", friendId);
                 sendJson(exchange, 200, resp);
             } catch (Exception e) {
-                sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "Invalid parameters"));
+                sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "Invalid parameters: " + e.getMessage()));
             }
         }
     }
@@ -61,8 +67,14 @@ public class FriendController {
             }
             Map<String, String> query = parseQuery(exchange.getRequestURI());
             try {
-                int userId = Integer.parseInt(query.getOrDefault("userId", ""));
-                int friendId = Integer.parseInt(query.getOrDefault("friendId", ""));
+                String userId = query.getOrDefault("userId", "");
+                String friendId = query.getOrDefault("friendId", "");
+
+                if (userId.isEmpty() || friendId.isEmpty()) {
+                    sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "userId and friendId are required"));
+                    return;
+                }
+
                 boolean removed = friendService.removeFriend(userId, friendId);
                 JSONObject resp = new JSONObject()
                         .put("success", true)
@@ -71,7 +83,7 @@ public class FriendController {
                         .put("friendId", friendId);
                 sendJson(exchange, 200, resp);
             } catch (Exception e) {
-                sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "Invalid parameters"));
+                sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "Invalid parameters: " + e.getMessage()));
             }
         }
     }
@@ -90,8 +102,14 @@ public class FriendController {
             }
             Map<String, String> query = parseQuery(exchange.getRequestURI());
             try {
-                int userId = Integer.parseInt(query.getOrDefault("userId", ""));
-                List<Integer> friendIds = friendService.listFriends(userId);
+                String userId = query.getOrDefault("userId", "");
+
+                if (userId.isEmpty()) {
+                    sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "userId is required"));
+                    return;
+                }
+
+                List<String> friendIds = friendService.listFriends(userId);
                 JSONArray friendsArray = new JSONArray(friendIds);
 
                 // Also include detailed Friend model data
@@ -113,7 +131,7 @@ public class FriendController {
                         .put("friendships", friendshipsArray);
                 sendJson(exchange, 200, resp);
             } catch (Exception e) {
-                sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "Invalid parameters"));
+                sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "Invalid parameters: " + e.getMessage()));
             }
         }
     }
