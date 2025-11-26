@@ -7,6 +7,7 @@ import SignupScreen from './screens/SignupScreen';
 import HomeScreen from './screens/HomeScreen';
 import BillReview from './screens/BillReview';
 import ActivityScreen from './screens/ActivityScreen';
+import FriendsScreen from './screens/FriendsScreen';
 import BottomNavBar from './components/BottomNavBar';
 
 const Stack = createNativeStackNavigator();
@@ -26,10 +27,6 @@ function PlaceholderScreen({ screenName }) {
 
 function GroupPotsScreen() {
   return <PlaceholderScreen screenName="Group Pots" />;
-}
-
-function FriendsScreen() {
-  return <PlaceholderScreen screenName="Friends" />;
 }
 
 function ScanReceiptScreen() {
