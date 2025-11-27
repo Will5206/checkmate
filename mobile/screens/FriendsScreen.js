@@ -21,6 +21,7 @@ export default function FriendsScreen() {
   const [isLoadingFriends, setIsLoadingFriends] = useState(true);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [removingFriendId, setRemovingFriendId] = useState(null);
 
   // Load friends list on component mount
   useEffect(() => {
@@ -108,43 +109,45 @@ export default function FriendsScreen() {
     }
   };
 
-  const handleRemoveFriend = (friendId, friendName) => {
-    Alert.alert(
-      'Remove Friend',
-      `Are you sure you want to remove ${friendName}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => {
-            const response = await removeFriend(friendId);
-            if (response.success) {
-              Alert.alert('Success', 'Friend removed');
-              loadFriends();
-            } else {
-              Alert.alert('Error', response.message || 'Failed to remove friend');
-            }
-          },
-        },
-      ]
-    );
+  const handleRemoveFriend = async (friendId, friendName) => {
+    console.log('🔴 [1/8] handleRemoveFriend called: friendId=', friendId, 'friendName=', friendName);
+    setRemovingFriendId(friendId);
+
+    // Bypass Alert.alert for web testing - it doesn't work properly on web
+    console.log('🔴 [1.5/8] User confirmed removal (auto-confirm for web), calling removeFriend');
+    const response = await removeFriend(friendId);
+    console.log('🔴 [8.5/8] Got response from removeFriend:', response);
+    if (response.success) {
+      console.log('✅ Friend removed successfully!');
+      loadFriends();
+      setRemovingFriendId(null);
+    } else {
+      console.log('❌ Failed to remove friend:', response.message);
+      setRemovingFriendId(null);
+    }
   };
 
-  const renderFriendItem = ({ item }) => (
-    <View style={styles.friendItem}>
-      <View style={styles.friendInfo}>
-        <Text style={styles.friendName}>{item.name || 'Unknown'}</Text>
-        <Text style={styles.friendEmail}>{item.email || item}</Text>
+  const renderFriendItem = ({ item }) => {
+    const isRemoving = removingFriendId === (item.userId || item);
+
+    return (
+      <View style={[
+        styles.friendItem,
+        isRemoving && styles.friendItemRemoving
+      ]}>
+        <View style={styles.friendInfo}>
+          <Text style={styles.friendName}>{item.name || 'Unknown'}</Text>
+          <Text style={styles.friendEmail}>{item.email || item}</Text>
+        </View>
+        <TouchableOpacity
+          style={styles.removeButton}
+          onPress={() => handleRemoveFriend(item.userId || item, item.name || 'this friend')}
+        >
+          <Text style={styles.removeButtonText}>Remove</Text>
+        </TouchableOpacity>
       </View>
-      <TouchableOpacity
-        style={styles.removeButton}
-        onPress={() => handleRemoveFriend(item.userId || item, item.name || 'this friend')}
-      >
-        <Text style={styles.removeButtonText}>Remove</Text>
-      </TouchableOpacity>
-    </View>
-  );
+    );
+  };
 
   return (
     <KeyboardAvoidingView
@@ -384,6 +387,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 2,
     elevation: 2,
+  },
+  friendItemRemoving: {
+    backgroundColor: '#fee2e2',
+    borderWidth: 2,
+    borderColor: '#dc2626',
   },
   friendInfo: {
     flex: 1,

@@ -88,7 +88,9 @@ export async function getFriendsList() {
  */
 export async function removeFriend(friendId) {
   try {
+    console.log('🔴 [2/8] removeFriend service: friendId=', friendId);
     const userId = await AsyncStorage.getItem('userId');
+    console.log('🔴 [2.5/8] removeFriend service: userId=', userId);
 
     if (!userId) {
       return {
@@ -97,8 +99,11 @@ export async function removeFriend(friendId) {
       };
     }
 
+    const url = `${API_BASE_URL}/friends/remove?userId=${userId}&friendId=${friendId}`;
+    console.log('🔴 [3/8] Making remove friend request to:', url);
+
     const response = await fetch(
-      `${API_BASE_URL}/friends/remove?userId=${userId}&friendId=${friendId}`,
+      url,
       {
         method: 'POST',
         headers: {
@@ -107,7 +112,9 @@ export async function removeFriend(friendId) {
       }
     );
 
+    console.log('🔴 [7.5/8] Remove friend response status:', response.status);
     const data = await response.json();
+    console.log('🔴 [8/8] Remove friend response data:', data);
     return data;
 
   } catch (error) {

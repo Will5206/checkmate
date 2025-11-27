@@ -73,12 +73,15 @@ public class FriendController {
                 String userId = query.getOrDefault("userId", "");
                 String friendId = query.getOrDefault("friendId", "");
 
+                System.out.println("🔴 [4/8] RemoveFriendHandler: userId=" + userId + ", friendId=" + friendId);
+
                 if (userId.isEmpty() || friendId.isEmpty()) {
                     sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "userId and friendId are required"));
                     return;
                 }
 
                 boolean removed = friendService.removeFriend(userId, friendId);
+                System.out.println("🔴 [7/8] RemoveFriendHandler: removed=" + removed);
                 JSONObject resp = new JSONObject()
                         .put("success", true)
                         .put("removed", removed)

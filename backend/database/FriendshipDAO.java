@@ -227,6 +227,7 @@ public class FriendshipDAO {
      * @return true if deletion was successful
      */
     public boolean removeFriendship(String userId1, String userId2) {
+        System.out.println("🔴 [5.5/8] FriendshipDAO.removeFriendship: userId1=" + userId1 + ", userId2=" + userId2);
         String sql = "DELETE FROM friendships WHERE " +
                      "(user_id_1 = ? AND user_id_2 = ?) OR " +
                      "(user_id_1 = ? AND user_id_2 = ?)";
@@ -239,7 +240,9 @@ public class FriendshipDAO {
             pstmt.setString(3, userId2);
             pstmt.setString(4, userId1);
 
+            System.out.println("🔴 [5.7/8] FriendshipDAO: Executing SQL DELETE query");
             int affectedRows = pstmt.executeUpdate();
+            System.out.println("🔴 [5.9/8] FriendshipDAO: affectedRows=" + affectedRows);
             return affectedRows > 0;
 
         } catch (SQLException e) {

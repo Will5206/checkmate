@@ -86,8 +86,10 @@ public class FriendService {
      * Remove friendship between two users (undirected). Returns true if removed.
      */
     public boolean removeFriendship(String userId1, String userId2) {
+        System.out.println("🔴 [5/8] FriendService.removeFriendship: userId1=" + userId1 + ", userId2=" + userId2);
         // Try to remove the friendship from database
         boolean removed = friendshipDAO.removeFriendship(userId1, userId2);
+        System.out.println("🔴 [6/8] FriendService.removeFriendship: removed=" + removed);
 
         if (removed) {
             // Notify both users about the removed friendship
@@ -121,6 +123,7 @@ public class FriendService {
      * Backwards-compatible: one-way remove wrapper uses undirected friendship.
      */
     public boolean removeFriend(String userId, String friendId) {
+        System.out.println("🔴 [4.5/8] FriendService.removeFriend: userId=" + userId + ", friendId=" + friendId);
         return removeFriendship(userId, friendId);
     }
 
