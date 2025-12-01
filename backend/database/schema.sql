@@ -99,3 +99,78 @@ CREATE INDEX idx_transactions_status ON transactions(status);
 CREATE INDEX idx_transactions_type ON transactions(transaction_type);
 CREATE INDEX idx_transactions_created_at ON transactions(created_at);
 CREATE INDEX idx_transactions_related_entity ON transactions(related_entity_id);
+
+-- -----
+-- receipts table for storing receipt information
+CREATE TABLE IF NOT EXISTS receipts (
+    receipt_id INT AUTO_INCREMENT PRIMARY KEY,
+    uploaded_by VARCHAR(36) NOT NULL,
+    merchant_name VARCHAR(255),
+    date TIMESTAMP,
+    total_amount DECIMAL(10, 2) NOT NULL,
+    tip_amount DECIMAL(10, 2) DEFAULT 0.00,
+    tax_amount DECIMAL(10, 2) DEFAULT 0.00,
+    image_url VARCHAR(500),
+    status ENUM('pending', 'accepted', 'declined', 'completed') DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (uploaded_by) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- indexes for receipts
+CREATE INDEX idx_receipts_uploaded_by ON receipts(uploaded_by);
+CREATE INDEX idx_receipts_status ON receipts(status);
+CREATE INDEX idx_receipts_created_at ON receipts(created_at);
+
+-- -----
+-- receipt_items table for storing individual items on a receipt
+CREATE TABLE IF NOT EXISTS receipt_items (
+    item_id INT AUTO_INCREMENT PRIMARY KEY,
+    receipt_id INT NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    price DECIMAL(10, 2) NOT NULL,
+    quantity INT DEFAULT 1,
+    category VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (receipt_id) REFERENCES receipts(receipt_id) ON DELETE CASCADE
+);
+
+-- indexes for receipt_items
+CREATE INDEX idx_receipt_items_receipt_id ON receipt_items(receipt_id);
+
+-- -----
+-- receipt_participants table for tracking who a receipt was sent to and their status
+CREATE TABLE IF NOT EXISTS receipt_participants (
+    participant_id INT AUTO_INCREMENT PRIMARY KEY,
+    receipt_id INT NOT NULL,
+    user_id VARCHAR(36) NOT NULL,
+    status ENUM('pending', 'accepted', 'declined') DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (receipt_id) REFERENCES receipts(receipt_id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    UNIQUE KEY unique_receipt_participant (receipt_id, user_id)
+);
+
+-- indexes for receipt_participants
+CREATE INDEX idx_receipt_participants_receipt_id ON receipt_participants(receipt_id);
+CREATE INDEX idx_receipt_participants_user_id ON receipt_participants(user_id);
+CREATE INDEX idx_receipt_participants_status ON receipt_participants(status);
+
+-- -----
+-- item_assignments table for tracking which items belong to which users
+CREATE TABLE IF NOT EXISTS item_assignments (
+    assignment_id INT AUTO_INCREMENT PRIMARY KEY,
+    receipt_id INT NOT NULL,
+    item_id INT NOT NULL,
+    user_id VARCHAR(36) NOT NULL,
+    quantity INT DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (receipt_id) REFERENCES receipts(receipt_id) ON DELETE CASCADE,
+    FOREIGN KEY (item_id) REFERENCES receipt_items(item_id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    UNIQUE KEY unique_item_user (item_id, user_id)
+);
+CREATE INDEX idx_item_assignments_receipt_id ON item_assignments(receipt_id);
+CREATE INDEX idx_item_assignments_item_id ON item_assignments(item_id);
+CREATE INDEX idx_item_assignments_user_id ON item_assignments(user_id);

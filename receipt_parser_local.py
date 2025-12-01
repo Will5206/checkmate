@@ -10,19 +10,28 @@ from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
 from PIL import Image
-from pillow_heif import register_heif_opener
 
-register_heif_opener()
+# Try to import pillow_heif for HEIC support (optional)
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    # pillow_heif not available - HEIC images won't be supported
+    # but JPEG/PNG will still work
+    pass
 
-# Load environment variables from .env.openai_key file
-load_dotenv("openai_key.env")
+# Load environment variables - try multiple locations
+# First try openai_key.env (with override), then .env (with override), then environment variables
+load_dotenv("openai_key.env", override=True)  # override=True ensures this file takes precedence
+load_dotenv(".env", override=False)  # Don't override if openai_key.env already set it
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
-    raise ValueError(
-        "OPENAI_API_KEY environment variable must be set. "
-        "Create an openai_key.env file with your API key."
-    )
+    print("ERROR: OPENAI_API_KEY environment variable must be set.", file=sys.stderr)
+    print("Create an openai_key.env file with: OPENAI_API_KEY=your_key_here", file=sys.stderr)
+    print("Or set it in your .env file, or as an environment variable.", file=sys.stderr)
+    print(json.dumps({"error": "OPENAI_API_KEY not configured. Please set it in openai_key.env or .env file."}))
+    sys.exit(1)
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -33,7 +42,9 @@ def encode_image(image_path: str) -> str:
 
 
 if len(sys.argv) < 2:
-    print(json.dumps({"error": "Please provide an image path as an argument"}))
+    error_msg = {"error": "Please provide an image path as an argument"}
+    print(json.dumps(error_msg), file=sys.stderr)
+    print(json.dumps(error_msg))
     sys.exit(1)
 
 
@@ -48,8 +59,22 @@ def ensure_jpeg(input_path: str) -> str:
 
 # Image path from Java ReceiptController
 original_path = sys.argv[1]
-jpeg_path = ensure_jpeg(original_path)
-base64_image = encode_image(jpeg_path)
+
+# Validate image file exists
+if not os.path.exists(original_path):
+    error_msg = {"error": f"Image file not found: {original_path}"}
+    print(json.dumps(error_msg), file=sys.stderr)
+    print(json.dumps(error_msg))
+    sys.exit(1)
+
+try:
+    jpeg_path = ensure_jpeg(original_path)
+    base64_image = encode_image(jpeg_path)
+except Exception as e:
+    error_msg = {"error": f"Failed to process image: {str(e)}"}
+    print(json.dumps(error_msg), file=sys.stderr)
+    print(json.dumps(error_msg))
+    sys.exit(1)
 
 prompt = """
 Extract the receipt information from the image.
@@ -86,23 +111,41 @@ Rules:
 """
 
 # Call vision model
-response = client.chat.completions.create(
-    model="gpt-4o",
-    messages=[
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{base64_image}"
+try:
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        },
                     },
-                },
-            ],
-        }
-    ],
-)
+                ],
+            }
+        ],
+    )
+except Exception as e:
+    error_str = str(e)
+    # Make error messages more user-friendly
+    if "billing_not_active" in error_str or "billing" in error_str.lower():
+        error_msg = {"error": "OpenAI account billing is not active. Please add a payment method at https://platform.openai.com/account/billing"}
+    elif "429" in error_str or "rate limit" in error_str.lower():
+        error_msg = {"error": "OpenAI API rate limit exceeded. Please try again in a few moments."}
+    elif "401" in error_str or "authentication" in error_str.lower() or "invalid" in error_str.lower():
+        error_msg = {"error": "OpenAI API key is invalid. Please check your API key in openai_key.env"}
+    elif "quota" in error_str.lower():
+        error_msg = {"error": "OpenAI API quota exceeded. Please check your account usage at https://platform.openai.com/usage"}
+    else:
+        error_msg = {"error": f"OpenAI API error: {error_str}"}
+    
+    print(json.dumps(error_msg), file=sys.stderr)
+    print(json.dumps(error_msg))
+    sys.exit(1)
 
 raw = response.choices[0].message.content.strip()
 
@@ -232,11 +275,17 @@ if unknown_items:
     print("Items needing manual price:", unknown_items, file=sys.stderr)
 
 # Post-processing pipeline
-override_price_from_raw_line(data)
-validate_receipt(data)
-normalize_numbers(data)
-apply_discounts_and_strip_tip(data)
-check_totals(data)
+try:
+    override_price_from_raw_line(data)
+    validate_receipt(data)
+    normalize_numbers(data)
+    apply_discounts_and_strip_tip(data)
+    check_totals(data)
+except Exception as e:
+    error_msg = {"error": f"Error processing receipt data: {str(e)}"}
+    print(json.dumps(error_msg), file=sys.stderr)
+    print(json.dumps(error_msg))
+    sys.exit(1)
 
 # Final output for Java side: clean JSON only
 print(json.dumps(data))

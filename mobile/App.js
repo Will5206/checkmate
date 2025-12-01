@@ -8,6 +8,8 @@ import HomeScreen from './screens/HomeScreen';
 import BillReview from './screens/BillReview';
 import ActivityScreen from './screens/ActivityScreen';
 import FriendsScreen from './screens/FriendsScreen';
+import PendingScreen from './screens/PendingScreen';
+import ProfileScreen from './screens/ProfileScreen';
 import BottomNavBar from './components/BottomNavBar';
 
 const Stack = createNativeStackNavigator();
@@ -46,12 +48,13 @@ export default function App() {
       >
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="Signup" component={SignupScreen} />
-        <Stack.Screen name="Home" component={HomeScreen} />
+        <Stack.Screen name="Home" component={ProfileScreen} />
         <Stack.Screen name="BillReview" component={BillReview} />
         <Stack.Screen name="GroupPots" component={GroupPotsScreen} />
         <Stack.Screen name="Friends" component={FriendsScreen} />
         <Stack.Screen name="ScanReceipt" component={ScanReceiptScreen} />
         <Stack.Screen name="Activity" component={ActivityScreen} />
+        <Stack.Screen name="Pending" component={PendingScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

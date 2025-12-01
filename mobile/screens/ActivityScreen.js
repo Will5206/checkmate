@@ -1,102 +1,146 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import BottomNavBar from '../components/BottomNavBar';
+import { getActivityReceipts } from '../services/receiptsService';
 
 export default function ActivityScreen() {
   const navigation = useNavigation();
+  const [receipts, setReceipts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const pastTransactions = [
-    {
-      id: 4,
-      restaurant: "Olive Garden",
-      amount: 24.30,
-      type: "payment",
-      time: "2 days ago",
-      status: "paid",
-      participants: ["Sarah Johnson", "Mike Chen"],
-      myItems: ["Caesar Salad", "Breadsticks"],
-    },
-    {
-      id: 5,
-      restaurant: "Pizza Hut",
-      amount: 18.95,
-      type: "payment",
-      time: "3 days ago",
-      status: "paid",
-      participants: ["Emma Wilson", "Alex Rodriguez", "Jessica Kim"],
-      myItems: ["Large Pizza (1/3)", "Garlic Bread"],
-    },
-    {
-      id: 6,
-      restaurant: "Subway",
-      amount: 9.50,
-      type: "payment",
-      time: "1 week ago",
-      status: "paid",
-      participants: ["Sarah Johnson"],
-      myItems: ["Footlong Turkey Sub", "Chips"],
-    },
-    {
-      id: 7,
-      restaurant: "Taco Bell",
-      amount: 15.75,
-      type: "payment",
-      time: "1 week ago",
-      status: "paid",
-      participants: ["Mike Chen", "Emma Wilson"],
-      myItems: ["Crunchwrap Supreme", "Nacho Fries", "Drink"],
-    },
-  ];
-
-  const handlePastTransactionClick = (transaction) => {
-    // Navigate to transaction detail screen
-    // For now, we'll just log it - you can add navigation later
-    console.log('Navigate to transaction detail:', transaction.id);
-    // navigation.navigate('TransactionDetail', { transactionId: transaction.id });
+  const loadReceipts = async () => {
+    try {
+      setLoading(true);
+      const response = await getActivityReceipts();
+      
+      if (response.success && response.receipts) {
+        setReceipts(response.receipts);
+      } else {
+        console.error('Failed to load receipts:', response.message);
+        setReceipts([]);
+      }
+    } catch (error) {
+      console.error('Error loading receipts:', error);
+      setReceipts([]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   };
 
-  const PastCard = ({ transaction }) => (
-    <TouchableOpacity
-      style={styles.pastCard}
-      onPress={() => handlePastTransactionClick(transaction)}
-      activeOpacity={0.7}
-    >
-      <View style={styles.cardContent}>
-        <View style={styles.cardLeft}>
-          <View style={styles.iconContainer}>
-            <Ionicons name="checkmark-circle" size={20} color="#059669" />
-          </View>
-          <View style={styles.cardInfo}>
-            <Text style={styles.restaurantName}>{transaction.restaurant}</Text>
-            <View style={styles.timeRow}>
-              <Ionicons name="time-outline" size={12} color="#6B7280" />
-              <Text style={styles.timeText}>{transaction.time}</Text>
-            </View>
-            <Text style={styles.participantsText}>
-              With {transaction.participants.length} other{transaction.participants.length === 1 ? '' : 's'}
-            </Text>
-          </View>
-        </View>
-        <View style={styles.cardRight}>
-          <Text style={styles.amountText}>
-            ${transaction.amount.toFixed(2)}
-          </Text>
-          <View style={styles.paidBadge}>
-            <Text style={styles.paidBadgeText}>Paid</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
-        </View>
-      </View>
-    </TouchableOpacity>
+  // Load receipts when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      loadReceipts();
+    }, [])
   );
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadReceipts();
+  };
+
+  const formatDate = (timestamp) => {
+    if (!timestamp) return 'Unknown date';
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return 'Yesterday';
+    if (diffDays < 7) return `${diffDays} days ago`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)} week${Math.floor(diffDays / 7) > 1 ? 's' : ''} ago`;
+    return date.toLocaleDateString();
+  };
+
+  const handleReceiptClick = (receipt) => {
+    // Transform receipt data to match BillReview format
+    const billData = {
+      merchant: receipt.merchantName || 'Unknown Merchant',
+      total: receipt.totalAmount || 0,
+      subtotal: (receipt.totalAmount || 0) - (receipt.taxAmount || 0) - (receipt.tipAmount || 0),
+      tax: receipt.taxAmount || 0,
+      tip: receipt.tipAmount || 0,
+      items: (receipt.items || []).map(item => ({
+        itemId: item.itemId, // Use actual itemId from backend
+        id: item.itemId, // Also set id for compatibility
+        name: item.name,
+        qty: item.quantity || 1,
+        price: item.price || 0,
+      })),
+      date: receipt.date ? new Date(receipt.date).toLocaleString() : 'Unknown date',
+    };
+    
+    // Navigate to BillReview screen with receipt data
+    navigation.navigate('BillReview', { 
+      data: billData,
+      receiptId: receipt.receiptId,
+      isFromActivity: true, // Flag to indicate this is from activity (enables item claiming)
+    });
+  };
+
+  const ReceiptCard = ({ receipt }) => {
+    const status = receipt.status || 'pending';
+    const isAccepted = status === 'accepted' || status === 'completed';
+    const itemCount = receipt.items ? receipt.items.length : 0;
+    
+    return (
+      <TouchableOpacity
+        style={styles.pastCard}
+        onPress={() => handleReceiptClick(receipt)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.cardContent}>
+          <View style={styles.cardLeft}>
+            <View style={styles.iconContainer}>
+              <Ionicons 
+                name={isAccepted ? "checkmark-circle" : "time-outline"} 
+                size={20} 
+                color={isAccepted ? "#059669" : "#6B7280"} 
+              />
+            </View>
+            <View style={styles.cardInfo}>
+              <Text style={styles.restaurantName}>
+                {receipt.merchantName || 'Unknown Merchant'}
+              </Text>
+              <View style={styles.timeRow}>
+                <Ionicons name="time-outline" size={12} color="#6B7280" />
+                <Text style={styles.timeText}>
+                  {formatDate(receipt.date || receipt.createdAt)}
+                </Text>
+              </View>
+              <Text style={styles.participantsText}>
+                {itemCount} item{itemCount !== 1 ? 's' : ''}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.cardRight}>
+            <Text style={styles.amountText}>
+              ${(receipt.totalAmount || 0).toFixed(2)}
+            </Text>
+            <View style={[styles.paidBadge, !isAccepted && styles.pendingBadge]}>
+              <Text style={[styles.paidBadgeText, !isAccepted && styles.pendingBadgeText]}>
+                {isAccepted ? 'Accepted' : 'Pending'}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={styles.wrapper}>
@@ -108,11 +152,32 @@ export default function ActivityScreen() {
         </View>
 
         {/* Content */}
-        <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-          {pastTransactions.map((transaction) => (
-            <PastCard key={transaction.id} transaction={transaction} />
-          ))}
-        </ScrollView>
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#059669" />
+            <Text style={styles.loadingText}>Loading receipts...</Text>
+          </View>
+        ) : receipts.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="receipt-outline" size={64} color="#9CA3AF" />
+            <Text style={styles.emptyText}>No receipts yet</Text>
+            <Text style={styles.emptySubtext}>
+              Accepted receipts will appear here
+            </Text>
+          </View>
+        ) : (
+          <ScrollView 
+            style={styles.scrollView} 
+            contentContainerStyle={styles.scrollContent}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            }
+          >
+            {receipts.map((receipt) => (
+              <ReceiptCard key={receipt.receiptId} receipt={receipt} />
+            ))}
+          </ScrollView>
+        )}
       </View>
       <BottomNavBar />
     </View>
@@ -231,6 +296,40 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#059669',
+  },
+  pendingBadge: {
+    backgroundColor: '#FEF3C7',
+  },
+  pendingBadgeText: {
+    color: '#D97706',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: 100,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: 100,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+    marginTop: 16,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginTop: 8,
   },
 });
 
