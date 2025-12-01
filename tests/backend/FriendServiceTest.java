@@ -30,10 +30,37 @@ public class FriendServiceTest {
         testUserId1 = "test-user-1-" + System.currentTimeMillis();
         testUserId2 = "test-user-2-" + System.currentTimeMillis();
         
-        // Note: In a real test setup, you would:
-        // 1. Create test users in the database
-        // 2. Use those user IDs for testing
-        // 3. Clean up after tests
+        // Create test users in the database using SQL directly
+        database.DatabaseConnection db = database.DatabaseConnection.getInstance();
+        try (java.sql.Connection conn = db.getConnection();
+             java.sql.PreparedStatement pstmt = conn.prepareStatement(
+                 "INSERT INTO users (user_id, name, email, phone_number, password_hash, balance) VALUES (?, ?, ?, ?, ?, ?)")) {
+            
+            pstmt.setString(1, testUserId1);
+            pstmt.setString(2, "Test User 1");
+            pstmt.setString(3, "test1@test.com");
+            pstmt.setString(4, "5551001");
+            pstmt.setString(5, "hash");
+            pstmt.setDouble(6, 0.0);
+            pstmt.executeUpdate();
+        } catch (java.sql.SQLException e) {
+            // User might already exist, continue
+        }
+        
+        try (java.sql.Connection conn = db.getConnection();
+             java.sql.PreparedStatement pstmt = conn.prepareStatement(
+                 "INSERT INTO users (user_id, name, email, phone_number, password_hash, balance) VALUES (?, ?, ?, ?, ?, ?)")) {
+            
+            pstmt.setString(1, testUserId2);
+            pstmt.setString(2, "Test User 2");
+            pstmt.setString(3, "test2@test.com");
+            pstmt.setString(4, "5551002");
+            pstmt.setString(5, "hash");
+            pstmt.setDouble(6, 0.0);
+            pstmt.executeUpdate();
+        } catch (java.sql.SQLException e) {
+            // User might already exist, continue
+        }
     }
 
     /**
