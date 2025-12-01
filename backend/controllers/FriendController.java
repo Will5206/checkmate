@@ -5,6 +5,9 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import utils.ValidationUtils;
+import database.UserDAO;
+import models.User;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -32,8 +35,14 @@ public class FriendController {
             }
             Map<String, String> query = parseQuery(exchange.getRequestURI());
             try {
-                int userId = Integer.parseInt(query.getOrDefault("userId", ""));
-                int friendId = Integer.parseInt(query.getOrDefault("friendId", ""));
+                String userId = query.getOrDefault("userId", "");
+                String friendId = query.getOrDefault("friendId", "");
+
+                if (userId.isEmpty() || friendId.isEmpty()) {
+                    sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "userId and friendId are required"));
+                    return;
+                }
+
                 boolean added = friendService.addFriend(userId, friendId);
                 JSONObject resp = new JSONObject()
                         .put("success", true)
@@ -42,7 +51,7 @@ public class FriendController {
                         .put("friendId", friendId);
                 sendJson(exchange, 200, resp);
             } catch (Exception e) {
-                sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "Invalid parameters"));
+                sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "Invalid parameters: " + e.getMessage()));
             }
         }
     }
@@ -61,9 +70,18 @@ public class FriendController {
             }
             Map<String, String> query = parseQuery(exchange.getRequestURI());
             try {
-                int userId = Integer.parseInt(query.getOrDefault("userId", ""));
-                int friendId = Integer.parseInt(query.getOrDefault("friendId", ""));
+                String userId = query.getOrDefault("userId", "");
+                String friendId = query.getOrDefault("friendId", "");
+
+                System.out.println("🔴 [4/8] RemoveFriendHandler: userId=" + userId + ", friendId=" + friendId);
+
+                if (userId.isEmpty() || friendId.isEmpty()) {
+                    sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "userId and friendId are required"));
+                    return;
+                }
+
                 boolean removed = friendService.removeFriend(userId, friendId);
+                System.out.println("🔴 [7/8] RemoveFriendHandler: removed=" + removed);
                 JSONObject resp = new JSONObject()
                         .put("success", true)
                         .put("removed", removed)
@@ -71,7 +89,96 @@ public class FriendController {
                         .put("friendId", friendId);
                 sendJson(exchange, 200, resp);
             } catch (Exception e) {
-                sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "Invalid parameters"));
+                sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "Invalid parameters: " + e.getMessage()));
+            }
+        }
+    }
+
+    public static class AddFriendByEmailHandler implements HttpHandler {
+        private static final UserDAO userDAO = new UserDAO();
+
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            addCors(exchange);
+
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(200, -1);
+                return;
+            }
+
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                sendJson(exchange, 405, new JSONObject()
+                    .put("success", false)
+                    .put("message", "Method not allowed"));
+                return;
+            }
+
+            Map<String, String> query = parseQuery(exchange.getRequestURI());
+
+            try {
+                String userId = query.getOrDefault("userId", "");
+                String friendEmail = query.getOrDefault("email", "");
+
+                // Validate inputs
+                if (userId.isEmpty()) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "userId is required"));
+                    return;
+                }
+
+                if (friendEmail.isEmpty()) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "email is required"));
+                    return;
+                }
+
+                // Validate email format
+                if (!ValidationUtils.isValidEmail(friendEmail)) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Invalid email format"));
+                    return;
+                }
+
+                // Lookup user by email
+                User friendUser = userDAO.findUserByEmail(friendEmail);
+
+                if (friendUser == null) {
+                    sendJson(exchange, 404, new JSONObject()
+                        .put("success", false)
+                        .put("message", "No user found with that email address"));
+                    return;
+                }
+
+                String friendId = friendUser.getUserId();
+
+                // Prevent self-friending
+                if (userId.equals(friendId)) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Cannot add yourself as a friend"));
+                    return;
+                }
+
+                // Add friendship (auto-accepts)
+                boolean added = friendService.addFriend(userId, friendId);
+
+                JSONObject resp = new JSONObject()
+                    .put("success", true)
+                    .put("added", added)
+                    .put("userId", userId)
+                    .put("friendId", friendId)
+                    .put("friendName", friendUser.getName())
+                    .put("friendEmail", friendUser.getEmail());
+
+                sendJson(exchange, 200, resp);
+
+            } catch (Exception e) {
+                sendJson(exchange, 500, new JSONObject()
+                    .put("success", false)
+                    .put("message", "Server error: " + e.getMessage()));
             }
         }
     }
@@ -90,30 +197,38 @@ public class FriendController {
             }
             Map<String, String> query = parseQuery(exchange.getRequestURI());
             try {
-                int userId = Integer.parseInt(query.getOrDefault("userId", ""));
-                List<Integer> friendIds = friendService.listFriends(userId);
-                JSONArray friendsArray = new JSONArray(friendIds);
+                String userId = query.getOrDefault("userId", "");
 
-                // Also include detailed Friend model data
-                JSONArray friendshipsArray = new JSONArray();
-                friendService.listFriendships(userId).forEach(f -> {
-                    JSONObject obj = new JSONObject()
-                            .put("friendshipId", f.getFriendshipId())
-                            .put("userId1", f.getUserId1())
-                            .put("userId2", f.getUserId2())
-                            .put("status", f.getStatus())
-                            .put("createdAt", f.getCreatedAt().getTime());
-                    friendshipsArray.put(obj);
-                });
+                if (userId.isEmpty()) {
+                    sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "userId is required"));
+                    return;
+                }
+
+                List<String> friendIds = friendService.listFriends(userId);
+
+                // Create UserDAO to fetch user details
+                UserDAO userDAO = new UserDAO();
+
+                // Build enriched friends array with user details
+                JSONArray friendsArray = new JSONArray();
+                for (String friendId : friendIds) {
+                    User friendUser = userDAO.findUserById(friendId);
+                    if (friendUser != null) {
+                        JSONObject friendObj = new JSONObject()
+                            .put("userId", friendUser.getUserId())
+                            .put("name", friendUser.getName())
+                            .put("email", friendUser.getEmail());
+                        friendsArray.put(friendObj);
+                    }
+                }
 
                 JSONObject resp = new JSONObject()
                         .put("success", true)
                         .put("userId", userId)
-                        .put("friends", friendsArray)
-                        .put("friendships", friendshipsArray);
+                        .put("friends", friendsArray);
                 sendJson(exchange, 200, resp);
             } catch (Exception e) {
-                sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "Invalid parameters"));
+                sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "Invalid parameters: " + e.getMessage()));
             }
         }
     }

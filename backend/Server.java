@@ -42,6 +42,7 @@ public class Server {
             server.createContext("/api/auth/login", new AuthController.LoginHandler());
             server.createContext("/api/auth/signup", new AuthController.SignupHandler());
             server.createContext("/api/friends/add", new FriendController.AddFriendHandler());
+            server.createContext("/api/friends/add-by-email", new FriendController.AddFriendByEmailHandler());
             server.createContext("/api/friends/remove", new FriendController.RemoveFriendHandler());
             server.createContext("/api/friends/list", new FriendController.ListFriendsHandler());
             server.createContext("/api/receipts/view", new ReceiptController.ViewReceiptHandler());

@@ -55,7 +55,7 @@ public class ReceiptNotificationService {
         }
 
         // Get all friends for this user
-        List<Integer> friendIds = friendService.listFriends(userId);
+        List<String> friendIds = friendService.listFriends(String.valueOf(userId));
         
         if (friendIds.isEmpty()) {
             System.out.println("User " + userId + " has no friends to notify about receipt " + receipt.getReceiptId());
@@ -63,9 +63,15 @@ public class ReceiptNotificationService {
         }
 
         // Create and attach a FriendObserver for each friend
-        for (Integer friendId : friendIds) {
-            FriendObserver observer = new FriendObserver(friendId);
-            receipt.addFriendObserver(observer);
+        for (String friendId : friendIds) {
+            // Convert String ID to int for FriendObserver (which expects int)
+            try {
+                int friendIdInt = Integer.parseInt(friendId);
+                FriendObserver observer = new FriendObserver(friendIdInt);
+                receipt.addFriendObserver(observer);
+            } catch (NumberFormatException e) {
+                System.err.println("Warning: Could not parse friend ID: " + friendId);
+            }
         }
 
         System.out.println("Enabled notifications for receipt " + receipt.getReceiptId() + 
@@ -91,16 +97,16 @@ public class ReceiptNotificationService {
         }
 
         // Verify that all specified IDs are actually friends
-        List<Integer> actualFriends = friendService.listFriends(userId);
+        List<String> actualFriends = friendService.listFriends(String.valueOf(userId));
         int notifiedCount = 0;
 
         for (Integer friendId : friendIds) {
-            if (actualFriends.contains(friendId)) {
+            if (actualFriends.contains(String.valueOf(friendId))) {
                 FriendObserver observer = new FriendObserver(friendId);
                 receipt.addFriendObserver(observer);
                 notifiedCount++;
             } else {
-                System.out.println("Warning: User " + friendId + " is not a friend of user " + userId + 
+                System.out.println("Warning: User " + friendId + " is not a friend of user " + userId +
                                   ", skipping notification");
             }
         }
@@ -121,10 +127,18 @@ public class ReceiptNotificationService {
      */
     public int sendReceiptToFriends(Receipt receipt, int userId) {
         int friendCount = enableReceiptNotifications(receipt, userId);
-        
+
         if (friendCount > 0) {
             // Get friend IDs for the sendToFriends method
-            List<Integer> friendIds = friendService.listFriends(userId);
+            List<String> friendIdsStr = friendService.listFriends(String.valueOf(userId));
+            List<Integer> friendIds = new java.util.ArrayList<>();
+            for (String id : friendIdsStr) {
+                try {
+                    friendIds.add(Integer.parseInt(id));
+                } catch (NumberFormatException e) {
+                    System.err.println("Warning: Could not parse friend ID: " + id);
+                }
+            }
             receipt.sendToFriends(friendIds);
             
             // Add receipt to each friend's pending receipts list
@@ -152,10 +166,18 @@ public class ReceiptNotificationService {
      */
     public int sendReceiptToSpecificFriends(Receipt receipt, int userId, List<Integer> friendIds) {
         int friendCount = enableReceiptNotificationsForSpecificFriends(receipt, userId, friendIds);
-        
+
         if (friendCount > 0) {
             // Filter to only actual friends (create a new list to avoid modifying the input)
-            List<Integer> actualFriends = friendService.listFriends(userId);
+            List<String> actualFriendsStr = friendService.listFriends(String.valueOf(userId));
+            List<Integer> actualFriends = new java.util.ArrayList<>();
+            for (String id : actualFriendsStr) {
+                try {
+                    actualFriends.add(Integer.parseInt(id));
+                } catch (NumberFormatException e) {
+                    System.err.println("Warning: Could not parse friend ID: " + id);
+                }
+            }
             List<Integer> validFriendIds = new java.util.ArrayList<>();
             for (Integer friendId : friendIds) {
                 if (actualFriends.contains(friendId)) {
