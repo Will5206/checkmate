@@ -1,8 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
-// --->>>>update this to your computer's IP address when testing on phone <<-- ---
-// find your IP: Mac/Linux: `ifconfig` | Windows: `ipconfig`
-const API_BASE_URL = 'http://localhost:8080/api';
+import { API_BASE_URL } from '../config';
 
 
 

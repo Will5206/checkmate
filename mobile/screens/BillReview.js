@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomNavBar from '../components/BottomNavBar';
 import { colors, spacing, typography } from '../styles/theme';
+import { createReceipt, claimItem, unclaimItem, getItemAssignments } from '../services/receiptsService';
 
 export default function BillReview() {
   const navigation = useNavigation();
@@ -40,17 +41,36 @@ export default function BillReview() {
   const [friendsEmails, setFriendsEmails] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [isFromCamera, setIsFromCamera] = useState(false);
+  const [isFromActivity, setIsFromActivity] = useState(false);
+  const [receiptId, setReceiptId] = useState(null);
+  const [itemAssignments, setItemAssignments] = useState({}); // itemId -> quantity
+  const [owedAmount, setOwedAmount] = useState(0);
+  const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
 
   // Check for parsed receipt data from route params or AsyncStorage
   useEffect(() => {
-    // First check route params (from HomeScreen navigation)
+    // First check route params (from HomeScreen navigation or Activity)
     const routeData = route.params?.data;
+    const routeReceiptId = route.params?.receiptId;
+    const routeIsFromActivity = route.params?.isFromActivity;
+    
+    if (routeReceiptId) {
+      setReceiptId(routeReceiptId);
+    }
+    
+    if (routeIsFromActivity) {
+      setIsFromActivity(true);
+      setIsFromCamera(false);
+    }
+    
     if (routeData) {
       try {
         // Transform backend data to match our format
         const transformedData = transformReceiptData(routeData);
         setBillData(transformedData);
-        setIsFromCamera(true);
+        if (!routeIsFromActivity) {
+          setIsFromCamera(true);
+        }
       } catch (error) {
         console.error('Error processing route data:', error);
       }
@@ -73,13 +93,72 @@ export default function BillReview() {
     }
   }, [route.params]);
 
+  // Load item assignments if viewing from Activity
+  useEffect(() => {
+    console.log('BillReview useEffect - isFromActivity:', isFromActivity, 'receiptId:', receiptId);
+    if (isFromActivity && receiptId) {
+      console.log('Loading item assignments for receiptId:', receiptId);
+      loadItemAssignments();
+    }
+  }, [isFromActivity, receiptId]);
+
+  const loadItemAssignments = async () => {
+    if (!receiptId) return;
+    
+    setIsLoadingAssignments(true);
+    try {
+      const response = await getItemAssignments(receiptId);
+      if (response.success) {
+        setItemAssignments(response.assignments || {});
+        setOwedAmount(response.owedAmount || 0);
+      }
+    } catch (error) {
+      console.error('Error loading item assignments:', error);
+    } finally {
+      setIsLoadingAssignments(false);
+    }
+  };
+
+  const handleToggleItemClaim = async (itemId) => {
+    if (!receiptId) return;
+    
+    const isClaimed = itemAssignments[itemId] && itemAssignments[itemId] > 0;
+    
+    try {
+      let response;
+      if (isClaimed) {
+        response = await unclaimItem(receiptId, itemId);
+      } else {
+        response = await claimItem(receiptId, itemId, 1);
+      }
+      
+      if (response.success) {
+        // Update local state
+        const newAssignments = { ...itemAssignments };
+        if (isClaimed) {
+          delete newAssignments[itemId];
+        } else {
+          newAssignments[itemId] = 1;
+        }
+        setItemAssignments(newAssignments);
+        setOwedAmount(response.owedAmount || 0);
+      } else {
+        Alert.alert('Error', response.message || 'Failed to update item claim');
+      }
+    } catch (error) {
+      console.error('Error toggling item claim:', error);
+      Alert.alert('Error', 'Failed to update item claim');
+    }
+  };
+
   // Transform backend receipt data to match our expected format
   const transformReceiptData = (data) => {
     // Backend parser returns: items (with name, qty, price), subtotal, tax, total, merchant
+    // Note: price in items might be per-item or line total - we'll treat it as per-item
     const items = (data.items || []).map((item, index) => ({
       id: index + 1,
       name: item.name || 'Unknown Item',
-      price: parseFloat(item.price) || 0,
+      price: parseFloat(item.price) || 0,  // Price per item
       qty: item.qty || 1,
     }));
 
@@ -88,8 +167,8 @@ export default function BillReview() {
     const tip = parseFloat(data.tip) || 0;
     const subtotal = parseFloat(data.subtotal) || 0;
     
-    // Calculate subtotal if not provided
-    const calculatedSubtotal = subtotal || (items.reduce((sum, item) => sum + item.price, 0));
+    // Calculate subtotal if not provided (sum of price * qty for all items)
+    const calculatedSubtotal = subtotal || (items.reduce((sum, item) => sum + (item.price * item.qty), 0));
     
     // Calculate tip if not provided (as difference between total and subtotal + tax)
     const calculatedTip = tip || Math.max(0, total - calculatedSubtotal - tax);
@@ -98,7 +177,7 @@ export default function BillReview() {
       restaurant_name: data.merchant || data.restaurant_name || 'Unknown Merchant',
       date: data.date || new Date().toLocaleDateString(),
       items: items,
-      tax: tax,
+      tax: tax || 0,
       tip: calculatedTip,
       total: total,
       subtotal: calculatedSubtotal,
@@ -116,36 +195,40 @@ export default function BillReview() {
     setIsCreating(true);
     
     try {
-      // Generate a simple share code
-      const shareCode = Math.random().toString(36).substr(2, 8).toUpperCase();
-      
-      const billToCreate = {
+      // Prepare receipt data for API
+      const receiptData = {
         restaurant_name: billData.restaurant_name,
         total_amount: billData.total,
         tax: billData.tax,
         tip: billData.tip,
-        subtotal: subtotal,
         items: billData.items.map((item) => ({
           name: item.name,
           price: item.price,
           qty: item.qty || 1,
-          claimed_by: null
         })),
         participants: friendsEmails.split(',').map(email => email.trim()).filter(email => email),
-        status: "pending",
-        share_code: shareCode
       };
       
-      // TODO: Replace with actual API call to create bill
-      // const createdBill = await createBill(billToCreate);
-      console.log('Bill to create:', billToCreate);
+      // Call API to create receipt
+      console.log('Creating receipt with data:', JSON.stringify(receiptData, null, 2));
+      const response = await createReceipt(receiptData);
+      console.log('Receipt creation response:', response);
       
-      Alert.alert('Success', 'Bill created successfully!', [
-        {
-          text: 'OK',
-          onPress: () => navigation.navigate('Home'),
-        },
-      ]);
+      if (response.success) {
+        const participantsCount = response.participantsAdded || 0;
+        const message = participantsCount > 0
+          ? `Bill created successfully! Shared with ${participantsCount} friend${participantsCount > 1 ? 's' : ''}.`
+          : 'Bill created successfully! (Note: Some friends may not have accounts yet)';
+        
+        Alert.alert('Success', message, [
+          {
+            text: 'OK',
+            onPress: () => navigation.navigate('Home'),
+          },
+        ]);
+      } else {
+        Alert.alert('Error', response.message || 'Failed to create bill. Please try again.');
+      }
     } catch (error) {
       console.error("Error creating bill:", error);
       Alert.alert('Error', 'Failed to create bill. Please try again.');
@@ -193,27 +276,82 @@ export default function BillReview() {
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle}>Items ({billData.items.length})</Text>
-            <TouchableOpacity>
-              <Ionicons name="create-outline" size={20} color={colors.primary} />
-            </TouchableOpacity>
+            {!isFromActivity && (
+              <TouchableOpacity>
+                <Ionicons name="create-outline" size={20} color={colors.primary} />
+              </TouchableOpacity>
+            )}
           </View>
           <View style={styles.itemsList}>
-            {billData.items.map((item, index) => (
-              <View key={item.id || index}>
-                <View style={styles.itemRow}>
-                  <View style={styles.itemInfo}>
-                    <Text style={styles.itemName}>{item.name}</Text>
-                    {item.qty > 1 && (
-                      <Text style={styles.itemQty}>Qty: {item.qty}</Text>
-                    )}
-                  </View>
-                  <Text style={styles.itemPrice}>${item.price.toFixed(2)}</Text>
+            {billData.items.map((item, index) => {
+              const itemId = item.itemId || item.id;
+              const isClaimed = itemId && itemAssignments[itemId] && itemAssignments[itemId] > 0;
+              
+              // Debug logging
+              if (isFromActivity && index === 0) {
+                console.log('First item - itemId:', itemId, 'isFromActivity:', isFromActivity, 'itemAssignments:', itemAssignments);
+              }
+              
+              return (
+                <View key={itemId || index}>
+                  <TouchableOpacity
+                    style={[styles.itemRow, isFromActivity && styles.itemRowClickable]}
+                    onPress={isFromActivity ? () => handleToggleItemClaim(itemId) : undefined}
+                    disabled={!isFromActivity}
+                    activeOpacity={isFromActivity ? 0.7 : 1}
+                  >
+                    <View style={styles.itemInfo}>
+                      <View style={styles.itemNameRow}>
+                        <Text style={styles.itemName}>{item.name}</Text>
+                        {isFromActivity && (
+                          <View style={[styles.claimBadge, isClaimed && styles.claimBadgeActive]}>
+                            <Ionicons 
+                              name={isClaimed ? "checkmark-circle" : "ellipse-outline"} 
+                              size={16} 
+                              color={isClaimed ? "#059669" : "#9CA3AF"} 
+                            />
+                            <Text style={[styles.claimBadgeText, isClaimed && styles.claimBadgeTextActive]}>
+                              {isClaimed ? "Claimed" : "Tap to claim"}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                      {item.qty > 1 && (
+                        <Text style={styles.itemQty}>Qty: {item.qty}</Text>
+                      )}
+                    </View>
+                    <Text style={styles.itemPrice}>${(item.price * (item.qty || 1)).toFixed(2)}</Text>
+                  </TouchableOpacity>
+                  {index < billData.items.length - 1 && <View style={styles.separator} />}
                 </View>
-                {index < billData.items.length - 1 && <View style={styles.separator} />}
-              </View>
-            ))}
+              );
+            })}
           </View>
         </View>
+
+        {/* Your Portion (only shown when viewing from Activity) */}
+        {isFromActivity && (
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>Your Portion</Text>
+            </View>
+            <View style={styles.breakdownContent}>
+              <View style={styles.breakdownRow}>
+                <Text style={styles.totalLabelBold}>Amount Owed</Text>
+                <Text style={styles.totalValueBold}>${owedAmount.toFixed(2)}</Text>
+              </View>
+              {Object.keys(itemAssignments).length === 0 && (
+                <Text style={styles.hintText}>Tap items above to claim them and calculate your portion</Text>
+              )}
+              {owedAmount > 0 && (
+                <TouchableOpacity style={styles.payButton}>
+                  <Ionicons name="card-outline" size={20} color="#fff" style={styles.buttonIcon} />
+                  <Text style={styles.payButtonText}>Pay ${owedAmount.toFixed(2)}</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        )}
 
         {/* Bill Breakdown */}
         <View style={styles.card}>
@@ -238,54 +376,56 @@ export default function BillReview() {
           </View>
         </View>
 
-        {/* Invite Friends */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Invite Friends</Text>
-          </View>
-          <View style={styles.inviteContent}>
-            <Text style={styles.inputLabel}>
-              Enter email addresses (separated by commas)
-            </Text>
-            <TextInput
-              style={styles.input}
-              placeholder="sarah@email.com, mike@email.com"
-              placeholderTextColor={colors.textLight}
-              value={friendsEmails}
-              onChangeText={setFriendsEmails}
-              multiline={false}
-              autoCapitalize="none"
-              keyboardType="email-address"
-            />
-            
-            <View style={styles.buttonContainer}>
-              <TouchableOpacity
-                style={[styles.primaryButton, (isCreating || !friendsEmails.trim()) && styles.buttonDisabled]}
-                onPress={handleCreateAndShare}
-                disabled={isCreating || !friendsEmails.trim()}
-              >
-                {isCreating ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <>
-                    <Ionicons name="share-outline" size={20} color="#fff" style={styles.buttonIcon} />
-                    <Text style={styles.primaryButtonText}>Create & Share Bill</Text>
-                  </>
-                )}
-              </TouchableOpacity>
+        {/* Invite Friends (only shown when creating new receipt, not from Activity) */}
+        {!isFromActivity && (
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>Invite Friends</Text>
+            </View>
+            <View style={styles.inviteContent}>
+              <Text style={styles.inputLabel}>
+                Enter email addresses (separated by commas)
+              </Text>
+              <TextInput
+                style={styles.input}
+                placeholder="sarah@email.com, mike@email.com"
+                placeholderTextColor={colors.textLight}
+                value={friendsEmails}
+                onChangeText={setFriendsEmails}
+                multiline={false}
+                autoCapitalize="none"
+                keyboardType="email-address"
+              />
               
-              {isFromCamera && (
+              <View style={styles.buttonContainer}>
                 <TouchableOpacity
-                  style={styles.secondaryButton}
-                  onPress={() => navigation.navigate('Home')}
+                  style={[styles.primaryButton, (isCreating || !friendsEmails.trim()) && styles.buttonDisabled]}
+                  onPress={handleCreateAndShare}
+                  disabled={isCreating || !friendsEmails.trim()}
                 >
-                  <Ionicons name="camera-outline" size={20} color={colors.primary} style={styles.buttonIcon} />
-                  <Text style={styles.secondaryButtonText}>Scan Another Receipt</Text>
+                  {isCreating ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <Ionicons name="share-outline" size={20} color="#fff" style={styles.buttonIcon} />
+                      <Text style={styles.primaryButtonText}>Create & Share Bill</Text>
+                    </>
+                  )}
                 </TouchableOpacity>
-              )}
+                
+                {isFromCamera && (
+                  <TouchableOpacity
+                    style={styles.secondaryButton}
+                    onPress={() => navigation.navigate('Home')}
+                  >
+                    <Ionicons name="camera-outline" size={20} color={colors.primary} style={styles.buttonIcon} />
+                    <Text style={styles.secondaryButtonText}>Scan Another Receipt</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           </View>
-        </View>
+        )}
       </ScrollView>
       <BottomNavBar />
     </View>
@@ -505,5 +645,59 @@ const styles = StyleSheet.create({
   },
   buttonIcon: {
     marginRight: spacing.xs,
+  },
+  itemRowClickable: {
+    backgroundColor: '#f9fafb',
+    borderRadius: 8,
+    marginVertical: 2,
+  },
+  itemNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.xs,
+  },
+  claimBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f3f4f6',
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginLeft: spacing.xs,
+    gap: 4,
+  },
+  claimBadgeActive: {
+    backgroundColor: '#d1fae5',
+  },
+  claimBadgeText: {
+    fontSize: typography.sizes.xs,
+    color: '#9CA3AF',
+    fontWeight: '500',
+  },
+  claimBadgeTextActive: {
+    color: '#059669',
+  },
+  payButton: {
+    backgroundColor: '#059669',
+    borderRadius: 12,
+    padding: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.md,
+    gap: spacing.xs,
+  },
+  payButtonText: {
+    color: '#fff',
+    fontSize: typography.sizes.md,
+    fontWeight: 'bold',
+  },
+  hintText: {
+    fontSize: typography.sizes.sm,
+    color: colors.textLight,
+    fontStyle: 'italic',
+    marginTop: spacing.sm,
+    textAlign: 'center',
   },
 });

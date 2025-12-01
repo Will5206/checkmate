@@ -8,6 +8,7 @@ import org.json.JSONObject;
 import utils.ValidationUtils;
 import database.UserDAO;
 import models.User;
+import models.Friend;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -162,7 +163,7 @@ public class FriendController {
                     return;
                 }
 
-                // Add friendship (auto-accepts)
+                // Add friendship (creates as 'pending', requires acceptance)
                 boolean added = friendService.addFriend(userId, friendId);
 
                 JSONObject resp = new JSONObject()
@@ -204,6 +205,7 @@ public class FriendController {
                     return;
                 }
 
+                // Get accepted friends only (pending requests are not included)
                 List<String> friendIds = friendService.listFriends(userId);
 
                 // Create UserDAO to fetch user details
@@ -229,6 +231,170 @@ public class FriendController {
                 sendJson(exchange, 200, resp);
             } catch (Exception e) {
                 sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "Invalid parameters: " + e.getMessage()));
+            }
+        }
+    }
+
+    /**
+     * Handler for accepting a friend request.
+     * POST /api/friends/accept?userId=X&friendId=Y
+     */
+    public static class AcceptFriendRequestHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            addCors(exchange);
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(200, -1);
+                return;
+            }
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                return;
+            }
+            
+            Map<String, String> query = parseQuery(exchange.getRequestURI());
+            try {
+                String userId = query.getOrDefault("userId", "");
+                String friendId = query.getOrDefault("friendId", "");
+
+                if (userId.isEmpty() || friendId.isEmpty()) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "userId and friendId are required"));
+                    return;
+                }
+
+                boolean accepted = friendService.acceptFriendRequest(userId, friendId);
+                
+                JSONObject resp = new JSONObject()
+                    .put("success", accepted)
+                    .put("message", accepted ? "Friend request accepted" : "Failed to accept friend request")
+                    .put("userId", userId)
+                    .put("friendId", friendId);
+                
+                sendJson(exchange, accepted ? 200 : 400, resp);
+            } catch (Exception e) {
+                sendJson(exchange, 400, new JSONObject()
+                    .put("success", false)
+                    .put("message", "Invalid parameters: " + e.getMessage()));
+            }
+        }
+    }
+
+    /**
+     * Handler for declining a friend request.
+     * POST /api/friends/decline?userId=X&friendId=Y
+     */
+    public static class DeclineFriendRequestHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            addCors(exchange);
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(200, -1);
+                return;
+            }
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                return;
+            }
+            
+            Map<String, String> query = parseQuery(exchange.getRequestURI());
+            try {
+                String userId = query.getOrDefault("userId", "");
+                String friendId = query.getOrDefault("friendId", "");
+
+                if (userId.isEmpty() || friendId.isEmpty()) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "userId and friendId are required"));
+                    return;
+                }
+
+                boolean declined = friendService.declineFriendRequest(userId, friendId);
+                
+                JSONObject resp = new JSONObject()
+                    .put("success", declined)
+                    .put("message", declined ? "Friend request declined" : "Failed to decline friend request")
+                    .put("userId", userId)
+                    .put("friendId", friendId);
+                
+                sendJson(exchange, declined ? 200 : 400, resp);
+            } catch (Exception e) {
+                sendJson(exchange, 400, new JSONObject()
+                    .put("success", false)
+                    .put("message", "Invalid parameters: " + e.getMessage()));
+            }
+        }
+    }
+
+    /**
+     * Handler for listing pending friend requests.
+     * GET /api/friends/pending?userId=X
+     */
+    public static class ListPendingFriendRequestsHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            addCors(exchange);
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(200, -1);
+                return;
+            }
+            if (!"GET".equals(exchange.getRequestMethod())) {
+                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                return;
+            }
+            
+            Map<String, String> query = parseQuery(exchange.getRequestURI());
+            try {
+                String userId = query.getOrDefault("userId", "");
+
+                if (userId.isEmpty()) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "userId is required"));
+                    return;
+                }
+
+                // Get all friendships for this user (including pending)
+                List<Friend> allFriendships = friendService.listFriendships(userId);
+                
+                // Filter to only pending requests where someone else requested to be friends with current user
+                UserDAO userDAO = new UserDAO();
+                JSONArray pendingRequests = new JSONArray();
+                
+                for (Friend friendship : allFriendships) {
+                    if ("pending".equals(friendship.getStatus())) {
+                        // Find which user is the requester (not the current user)
+                        String requesterId = friendship.getUserId1().equals(userId) 
+                            ? friendship.getUserId2() 
+                            : friendship.getUserId1();
+                        
+                        // Show requests where current user received the request
+                        // (friendship exists with pending status, current user is involved)
+                        User requester = userDAO.findUserById(requesterId);
+                        if (requester != null) {
+                            JSONObject requestObj = new JSONObject()
+                                .put("friendshipId", friendship.getFriendshipId())
+                                .put("userId", requester.getUserId())
+                                .put("name", requester.getName())
+                                .put("email", requester.getEmail())
+                                .put("status", friendship.getStatus())
+                                .put("createdAt", friendship.getCreatedAt().getTime());
+                            pendingRequests.put(requestObj);
+                        }
+                    }
+                }
+                
+                JSONObject resp = new JSONObject()
+                    .put("success", true)
+                    .put("userId", userId)
+                    .put("pendingRequests", pendingRequests);
+                
+                sendJson(exchange, 200, resp);
+            } catch (Exception e) {
+                sendJson(exchange, 400, new JSONObject()
+                    .put("success", false)
+                    .put("message", "Invalid parameters: " + e.getMessage()));
             }
         }
     }

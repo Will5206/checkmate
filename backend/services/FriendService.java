@@ -101,19 +101,18 @@ public class FriendService {
 
     /**
      * Backwards-compatible: one-way add wrapper uses undirected friendship.
+     * Creates a pending friendship request that requires acceptance.
      */
     public boolean addFriend(String userId, String friendId) {
         // Check if friendship already exists
         Friend existingFriendship = getFriendship(userId, friendId);
         boolean wasNewFriendship = (existingFriendship == null);
 
-        // Add the friendship
+        // Add the friendship (creates as 'pending' status)
         Friend friendship = addFriendship(userId, friendId);
 
-        // Automatically accept the friendship for backwards compatibility
-        if (friendship != null && wasNewFriendship) {
-            acceptFriendRequest(userId, friendId);
-        }
+        // Note: Friendship is created as 'pending' and requires acceptance
+        // The recipient should accept/decline via acceptFriendRequest/declineFriendRequest
 
         // Return true if this was a new friendship
         return wasNewFriendship;

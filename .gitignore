@@ -55,6 +55,7 @@ logs/
 .env.local
 .env.production
 env/
+openai_key.env
 
 # OS
 .DS_Store
