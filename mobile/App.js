@@ -4,7 +4,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { View, Text, StyleSheet } from 'react-native';
 import LoginScreen from './screens/LoginScreen';
 import SignupScreen from './screens/SignupScreen';
-import HomeScreen from './screens/HomeScreen';
+import ScanReceiptScreen from './screens/ScanReceiptScreen';
 import BillReview from './screens/BillReview';
 import ActivityScreen from './screens/ActivityScreen';
 import FriendsScreen from './screens/FriendsScreen';
