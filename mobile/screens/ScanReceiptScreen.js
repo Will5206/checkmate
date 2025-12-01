@@ -12,37 +12,11 @@ import BottomNavBar from '../components/BottomNavBar';
 import { API_BASE_URL } from '../config';
 
 // create string that is mainColor for main color text or buttons - good for testing
-const mainColor = 'blue';
-export default function HomeScreen() {
+const mainColor = 'white';
+export default function ScanReceiptScreen() {
   const [imageUri, setImageUri] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const navigation = useNavigation();
-
-  // Load saved image URI when screen comes into focus
-  useFocusEffect(
-    React.useCallback(() => {
-      const loadSavedImage = async () => {
-        try {
-          const savedUri = await AsyncStorage.getItem('scanReceiptImageUri');
-          if (savedUri) {
-            setImageUri(savedUri);
-          }
-        } catch (error) {
-          console.error('Error loading saved image:', error);
-        }
-      };
-      loadSavedImage();
-    }, [])
-  );
-
-  // Save image URI when it changes
-  useEffect(() => {
-    if (imageUri) {
-      AsyncStorage.setItem('scanReceiptImageUri', imageUri);
-    } else {
-      AsyncStorage.removeItem('scanReceiptImageUri');
-    }
-  }, [imageUri]);
 
   const handlePickImage = async () => {
     try {
@@ -76,45 +50,26 @@ export default function HomeScreen() {
       const blob = await response.blob();
       console.log('Blob size:', blob.size, 'bytes');
       
-      // Send image to backend parser (120 second timeout - OpenAI API can take 15-30 seconds)
+      // Send image to backend parser (no timeout - let it complete)
       console.log('Sending request to backend...');
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 seconds
-      
-      let parseResponse;
-      try {
-        parseResponse = await fetch(`${API_BASE_URL}/receipt/parse`, {
-          method: 'POST',
-          body: blob,
-          headers: {
-            'Content-Type': 'image/jpeg',
-          },
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-      } catch (error) {
-        clearTimeout(timeoutId);
-        if (error.name === 'AbortError') {
-          throw new Error('Request timed out. Receipt parsing usually takes 15-30 seconds. Please try again.');
-        }
-        throw error;
-      }
+      const parseResponse = await fetch(`${API_BASE_URL}/receipt/parse`, {
+        method: 'POST',
+        body: blob,
+        headers: {
+          'Content-Type': 'image/jpeg',
+        },
+      });
       
       console.log('Response status:', parseResponse.status);
 
       const receiptData = await parseResponse.json();
-      console.log('Receipt data response:', JSON.stringify(receiptData, null, 2));
 
       if (!parseResponse.ok) {
-        const errorMsg = receiptData.message || `Server error: ${parseResponse.status}`;
-        console.error('Receipt parsing failed:', errorMsg);
-        throw new Error(errorMsg);
+        throw new Error(receiptData.message || `Server error: ${parseResponse.status}`);
       }
       
       if (!receiptData.success) {
-        const errorMsg = receiptData.message || 'Failed to parse receipt';
-        console.error('Receipt parsing unsuccessful:', errorMsg);
-        throw new Error(errorMsg);
+        throw new Error(receiptData.message || 'Failed to parse receipt');
       }
 
       setIsProcessing(false);
@@ -137,20 +92,12 @@ export default function HomeScreen() {
       console.error('Error message:', error.message);
       console.error('Error stack:', error.stack);
       
-      // Determine error message - use the actual error message from backend if available
-      let errorMessage = error.message || 'We couldn\'t read your receipt. Please try taking the photo again.';
-      
-      // Enhance error messages for common cases
+      // Determine error message
+      let errorMessage = 'We couldn\'t read your receipt. Please try taking the photo again.';
       if (error.name === 'AbortError' || error.message.includes('timeout')) {
         errorMessage = 'The request took too long. The receipt might be complex or the server is busy. Please try again.';
       } else if (error.message.includes('Network') || error.message.includes('Failed to fetch') || error.message.includes('Network request failed')) {
         errorMessage = `Network error. Cannot reach server at ${API_BASE_URL}. Please check:\n1. Server is running\n2. IP address is correct\n3. Phone and computer are on same network`;
-      } else if (error.message.includes('Python script failed')) {
-        // The backend should have included detailed error, but if not, show generic message
-        errorMessage = error.message + '\n\nCheck backend terminal logs for detailed Python error output.';
-      } else if (error.message.includes('billing') || error.message.includes('Billing')) {
-        // OpenAI billing error - make it more user-friendly
-        errorMessage = error.message + '\n\nTo fix this:\n1. Go to https://platform.openai.com/account/billing\n2. Add a payment method\n3. Ensure billing is active\n4. Try again';
       }
       
       // Show error alert with retry option
@@ -162,7 +109,6 @@ export default function HomeScreen() {
             text: 'Retake Photo',
             onPress: () => {
               setImageUri(null);
-              AsyncStorage.removeItem('scanReceiptImageUri');
               handlePickImage();
             },
           },
@@ -195,10 +141,7 @@ export default function HomeScreen() {
                 <Text style={styles.buttonText}>Process & Split Bill</Text>
               )}
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => {
-              setImageUri(null);
-              AsyncStorage.removeItem('scanReceiptImageUri');
-            }}>
+            <TouchableOpacity onPress={() => setImageUri(null)}>
               <Text style={styles.reset}>Reset</Text>
             </TouchableOpacity>
           </>
@@ -224,7 +167,8 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 24, fontWeight: '700', marginBottom: 20 },
   button: { backgroundColor: '#059669', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
-  buttonText: { color: 'white', fontWeight: '600' },
+  buttonText: { color: mainColor, fontWeight: '600' },
   preview: { width: 250, height: 300, borderRadius: 12, marginBottom: 20 },
   reset: { color: '#2563eb', marginTop: 10 },
 });
+
