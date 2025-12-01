@@ -69,18 +69,18 @@ public class DatabaseConnection {
     }
     
     /**
-     * get the active db connection
-     * @return Connection object
+     * get the active database connection
+     * This is now thread-safe ---- ensures only one connection is created at a time
+     * @return Connection object (never null)
+     * @throws SQLException if connection cannot be established
      */
-    public Connection getConnection() {
-        try {
-            // check if connection is still valid --- reconnect if needed
-            if (connection == null || connection.isClosed()) {
-                connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
-            }
-        } catch (SQLException e) {
-            System.err.println("error checking/reestablishing connection");
-            e.printStackTrace();
+    public synchronized Connection getConnection() throws SQLException {
+        //check if connection is still valid - reconnect if needed
+        //synchronized to prevent race conditions -------when multiple threads
+        // check simultaneously
+        if (connection == null || connection.isClosed()) {
+            connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+            System.out.println("Database connection established/reconnected");
         }
         return connection;
     }
@@ -137,32 +137,34 @@ public class DatabaseConnection {
     }
     
     /**
-     * testt db connection
-     * @return true if connection is valid
+     * Test database connection.
+     * @return true if connection is valid, false otherwise
      */
     public boolean testConnection() {
         try {
             Connection conn = getConnection();
             return conn != null && !conn.isClosed();
         } catch (SQLException e) {
+            System.err.println("Connection test failed: " + e.getMessage());
             return false;
         }
     }
-    
+
 
 
 
     /**
-     * close db connection
+     * Close database connection.
+     * Thread-safe method to safely close the shared connection.
      */
-    public void closeConnection() {
+    public synchronized void closeConnection() {
         try {
             if (connection != null && !connection.isClosed()) {
                 connection.close();
                 System.out.println("Database connection closed");
             }
         } catch (SQLException e) {
-            System.err.println("Error closing database connection");
+            System.err.println("Error closing database connection: " + e.getMessage());
             e.printStackTrace();
         }
     }
