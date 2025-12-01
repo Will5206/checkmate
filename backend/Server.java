@@ -31,9 +31,10 @@ public class Server {
                 System.err.println("Failed to connect to database");
                 return;
             }
-            
-            // init db schema
-            dbConnection.initializeSchema("backend/database/schema.sql");
+
+            // init db schema - commented out since Railway database already has schema
+            // Uncomment this line only if you need to initialize a fresh database
+            // dbConnection.initializeSchema("backend/database/schema.sql");
             
             // create HTTP server
             HttpServer server = HttpServer.create(new InetSocketAddress(PORT), 0);

@@ -19,20 +19,15 @@ const getLocalIP = () => {
   if (typeof process !== 'undefined' && process.env.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL;
   }
-  
+
   // For device/simulator testing: use your computer's local IP
   // For web testing: use localhost
-  // 
+  //
   // TODO: Update this to YOUR computer's IP address
   // Example: 'http://192.168.0.193:8080/api' (current developer's IP)
   // Example: 'http://192.168.1.100:8080/api' (teammate's IP would be different)
-  
-  if (__DEV__) {
-    // Using IP for device/simulator access (update to your IP)
-    // For web, you can use 'http://localhost:8080/api'
-    return 'http://192.168.0.193:8080/api';
-  }
-  
+
+  // Use localhost for web development
   return 'http://localhost:8080/api';
 };
 

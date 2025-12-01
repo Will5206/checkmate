@@ -23,16 +23,13 @@ import java.io.IOException;
 
 public class DatabaseConnection {
 
-    // db config stuff - uses environment variables if available, otherwise defaults to localhost
-    private static final String DB_URL = System.getenv("DB_URL") != null
-        ? System.getenv("DB_URL")
-        : "jdbc:mysql://localhost:3306/checkmate_db";
-    private static final String DB_USER = System.getenv("DB_USER") != null
-        ? System.getenv("DB_USER")
-        : "root";
-    private static final String DB_PASSWORD = System.getenv("DB_PASSWORD") != null
-        ? System.getenv("DB_PASSWORD")
-        : "password";
+    // db config stuff - checks system properties first (from Maven -D flags), then environment variables, then defaults
+    private static final String DB_URL = System.getProperty("DB_URL",
+        System.getenv("DB_URL") != null ? System.getenv("DB_URL") : "jdbc:mysql://localhost:3306/checkmate_db");
+    private static final String DB_USER = System.getProperty("DB_USER",
+        System.getenv("DB_USER") != null ? System.getenv("DB_USER") : "root");
+    private static final String DB_PASSWORD = System.getProperty("DB_PASSWORD",
+        System.getenv("DB_PASSWORD") != null ? System.getenv("DB_PASSWORD") : "password");
 
     //singleton instance
     private static DatabaseConnection instance;
