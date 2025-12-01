@@ -3,21 +3,30 @@ import React, { useState } from 'react';
 import { View, Text, Image, TouchableOpacity, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation } from '@react-navigation/native';
-// bringing in nav bar
 import BottomNavBar from '../components/BottomNavBar';
 
+// Use same IP as authService - update this to your computer's IP address
+const API_BASE_URL = 'http://192.168.0.78:8080/api';
+
+// create string that is mainColor for main color text or buttons - good for testing
+const mainColor = 'blue';
 export default function HomeScreen() {
   const [imageUri, setImageUri] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const navigation = useNavigation();
 
   const handlePickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.8,
-    });
-    if (!result.canceled) {
-      setImageUri(result.assets[0].uri);
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: 'images',
+        quality: 0.8,
+      });
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setImageUri(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error picking image:', error);
+      Alert.alert('Error', 'Failed to open image picker');
     }
   };
 
@@ -27,20 +36,86 @@ export default function HomeScreen() {
       return;
     }
     setIsProcessing(true);
-    // fake parse (simulate backend)
-    setTimeout(() => {
-      setIsProcessing(false);
-      navigation.navigate('BillReview', {
-        data: {
-          merchant: 'Demo Store',
-          total: 11.0,
-          items: [
-            { name: 'Taco', qty: 2, price: 3.5 },
-            { name: 'Soda', qty: 1, price: 1.75 },
-          ],
+    
+    try {
+      console.log('Starting receipt processing...');
+      console.log('API URL:', `${API_BASE_URL}/receipt/parse`);
+      
+      // Convert image URI to blob for upload
+      console.log('Converting image to blob...');
+      const response = await fetch(imageUri);
+      const blob = await response.blob();
+      console.log('Blob size:', blob.size, 'bytes');
+      
+      // Send image to backend parser (no timeout - let it complete)
+      console.log('Sending request to backend...');
+      const parseResponse = await fetch(`${API_BASE_URL}/receipt/parse`, {
+        method: 'POST',
+        body: blob,
+        headers: {
+          'Content-Type': 'image/jpeg',
         },
       });
-    }, 1000);
+      
+      console.log('Response status:', parseResponse.status);
+
+      const receiptData = await parseResponse.json();
+
+      if (!parseResponse.ok) {
+        throw new Error(receiptData.message || `Server error: ${parseResponse.status}`);
+      }
+      
+      if (!receiptData.success) {
+        throw new Error(receiptData.message || 'Failed to parse receipt');
+      }
+
+      setIsProcessing(false);
+      
+      // Navigate to BillReview with parsed data
+      navigation.navigate('BillReview', {
+        data: {
+          merchant: receiptData.merchant,
+          total: receiptData.total,
+          subtotal: receiptData.subtotal,
+          tax: receiptData.tax,
+          tip: 0, // Backend doesn't extract tip, will be calculated
+          items: receiptData.items || [],
+        },
+      });
+    } catch (error) {
+      setIsProcessing(false);
+      console.error('Receipt processing error:', error);
+      console.error('Error name:', error.name);
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+      
+      // Determine error message
+      let errorMessage = 'We couldn\'t read your receipt. Please try taking the photo again.';
+      if (error.name === 'AbortError' || error.message.includes('timeout')) {
+        errorMessage = 'The request took too long. The receipt might be complex or the server is busy. Please try again.';
+      } else if (error.message.includes('Network') || error.message.includes('Failed to fetch') || error.message.includes('Network request failed')) {
+        errorMessage = `Network error. Cannot reach server at ${API_BASE_URL}. Please check:\n1. Server is running\n2. IP address is correct\n3. Phone and computer are on same network`;
+      }
+      
+      // Show error alert with retry option
+      Alert.alert(
+        'Error Reading Receipt',
+        errorMessage,
+        [
+          {
+            text: 'Retake Photo',
+            onPress: () => {
+              setImageUri(null);
+              handlePickImage();
+            },
+          },
+          {
+            text: 'Cancel',
+            style: 'cancel',
+          },
+        ]
+      );
+    }
   };
 
   return (
@@ -89,7 +164,7 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 24, fontWeight: '700', marginBottom: 20 },
   button: { backgroundColor: '#059669', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
-  buttonText: { color: 'white', fontWeight: '600' },
+  buttonText: { color: mainColor, fontWeight: '600' },
   preview: { width: 250, height: 300, borderRadius: 12, marginBottom: 20 },
   reset: { color: '#2563eb', marginTop: 10 },
 });
