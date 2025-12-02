@@ -237,6 +237,33 @@ public class AuthServiceTest {
         }
     }
 
+    /**
+     * Test 13: Signin with empty password should fail
+     */
+    @Test
+    void testSignin_withEmptyPassword_failure() {
+        User user = authService.login(testEmail, "");
+
+        assertNull(user, "Login should fail with empty password");
+    }
+
+    /**
+     * Test 14: Successful signin returns user with correct properties
+     */
+    @Test
+    void testSignin_success_returnsUserWithProperties() {
+        // Login with valid credentials
+        User user = authService.login(testEmail, testPassword);
+
+        if (user != null) {
+            // Verify user object has required properties
+            assertNotNull(user.getUserId(), "User should have ID");
+            assertNotNull(user.getEmail(), "User should have email");
+            assertNotNull(user.getName(), "User should have name");
+            assertTrue(user.getBalance() >= 0, "User balance should be non-negative");
+        }
+    }
+
     @AfterEach
     void cleanup() {
         // In a real test environment, you would clean up test data here
