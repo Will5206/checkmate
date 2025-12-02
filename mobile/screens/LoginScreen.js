@@ -9,7 +9,9 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
+  StatusBar,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { loginUser } from '../services/authService';
 import { colors, spacing, typography } from '../styles/theme';
 
@@ -55,234 +57,270 @@ export default function LoginScreen({ navigation }) {
 
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" />
+      <LinearGradient
+        colors={['#0d9488', '#14b8a6', '#5eead4']}
+        style={styles.gradient}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
       >
-        <View style={styles.header}>
-          <Text style={styles.logo}>💰</Text>
-          <Text style={styles.title}>CheckMate</Text>
-          <Text style={styles.subtitle}>Split bills effortlessly</Text>
-        </View>
-
-        <View style={styles.form}>
-          <Text style={styles.welcomeText}>Welcome Back</Text>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Email or Phone Number</Text>
-            <TextInput
-              style={[styles.input, error && styles.inputError]}
-              placeholder="Enter your email or phone"
-              placeholderTextColor={colors.textLight}
-              value={emailOrPhone}
-              onChangeText={(text) => {
-                setEmailOrPhone(text);
-                setError(null); // Clear error when user types
-              }}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              editable={!loading}
-            />
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Password</Text>
-            <TextInput
-              style={[styles.input, error && styles.inputError]}
-              placeholder="Enter your password"
-              placeholderTextColor={colors.textLight}
-              value={password}
-              onChangeText={(text) => {
-                setPassword(text);
-                setError(null); // Clear error when user types
-              }}
-              secureTextEntry
-              editable={!loading}
-            />
-          </View>
-
-          {error && (
-            <Text style={styles.errorText}>{error}</Text>
-          )}
-
-          <TouchableOpacity style={styles.forgotPassword}>
-            <Text style={styles.forgotPasswordText}>Forgot password?</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={handleLogin}
-            disabled={loading}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.keyboardView}
+        >
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
           >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>Log In</Text>
-            )}
-          </TouchableOpacity>
+            {/* Header */}
+            <View style={styles.header}>
+              <View style={styles.brandContainer}>
+                <View style={styles.iconCircle}>
+                  <Text style={styles.iconText}>✓</Text>
+                </View>
+                <Text style={styles.brandName}>CheckMate</Text>
+              </View>
+              <Text style={styles.tagline}>Split bills, settle up instantly</Text>
+            </View>
 
-          <View style={styles.divider}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>OR</Text>
-            <View style={styles.dividerLine} />
-          </View>
+            {/* Login Card */}
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Welcome back</Text>
+              <Text style={styles.cardSubtitle}>Sign in to continue</Text>
 
-          <TouchableOpacity style={styles.socialButton}>
-            <Text style={styles.socialButtonText}>🍎 Continue with Apple</Text>
-          </TouchableOpacity>
+              <View style={styles.form}>
+                <View style={styles.inputWrapper}>
+                  <Text style={styles.label}>Email or Phone</Text>
+                  <TextInput
+                    style={[styles.input, error && styles.inputError]}
+                    placeholder="Enter your email or phone"
+                    placeholderTextColor="#9CA3AF"
+                    value={emailOrPhone}
+                    onChangeText={(text) => {
+                      setEmailOrPhone(text);
+                      setError(null);
+                    }}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    editable={!loading}
+                  />
+                </View>
 
-          <TouchableOpacity style={styles.socialButton}>
-            <Text style={styles.socialButtonText}>🔍 Continue with Google</Text>
-          </TouchableOpacity>
+                <View style={styles.inputWrapper}>
+                  <View style={styles.labelRow}>
+                    <Text style={styles.label}>Password</Text>
+                    <TouchableOpacity onPress={() => {}}>
+                      <Text style={styles.forgotText}>Forgot?</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TextInput
+                    style={[styles.input, error && styles.inputError]}
+                    placeholder="Enter your password"
+                    placeholderTextColor="#9CA3AF"
+                    value={password}
+                    onChangeText={(text) => {
+                      setPassword(text);
+                      setError(null);
+                    }}
+                    secureTextEntry
+                    editable={!loading}
+                  />
+                </View>
 
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>Don't have an account? </Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
-              <Text style={styles.footerLink}>Sign up</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+                {error && (
+                  <View style={styles.errorContainer}>
+                    <Text style={styles.errorText}>{error}</Text>
+                  </View>
+                )}
+
+                <TouchableOpacity
+                  style={[styles.loginButton, loading && styles.loginButtonDisabled]}
+                  onPress={handleLogin}
+                  disabled={loading}
+                  activeOpacity={0.8}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.loginButtonText}>Sign In</Text>
+                  )}
+                </TouchableOpacity>
+
+                <View style={styles.signupContainer}>
+                  <Text style={styles.signupText}>New to CheckMate? </Text>
+                  <TouchableOpacity onPress={() => navigation.navigate('Signup')}>
+                    <Text style={styles.signupLink}>Create account</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.bottomSpacer} />
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </LinearGradient>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+  },
+  gradient: {
+    flex: 1,
+  },
+  keyboardView: {
+    flex: 1,
   },
   scrollContent: {
     flexGrow: 1,
-    justifyContent: 'center',
-    padding: spacing.lg,
+    paddingHorizontal: 24,
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingBottom: 40,
   },
   header: {
     alignItems: 'center',
-    marginBottom: spacing.xl,
+    marginBottom: 48,
   },
-  logo: {
-    fontSize: 60,
-    marginBottom: spacing.sm,
+  brandContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
   },
-  title: {
-    fontSize: typography.sizes.xxl,
+  iconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  iconText: {
+    fontSize: 24,
     fontWeight: 'bold',
-    color: colors.primary,
-    marginBottom: spacing.xs,
+    color: '#fff',
   },
-  subtitle: {
-    fontSize: typography.sizes.md,
-    color: colors.textLight,
+  brandName: {
+    fontSize: 36,
+    fontWeight: '900',
+    color: '#fff',
+    letterSpacing: -0.5,
+  },
+  tagline: {
+    fontSize: 16,
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontWeight: '500',
+  },
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    padding: 28,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 8,
+  },
+  cardTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 6,
+  },
+  cardSubtitle: {
+    fontSize: 15,
+    color: '#6B7280',
+    marginBottom: 28,
   },
   form: {
     width: '100%',
   },
-  welcomeText: {
-    fontSize: typography.sizes.xl,
-    fontWeight: 'bold',
-    color: colors.text,
-    marginBottom: spacing.lg,
-    textAlign: 'center',
+  inputWrapper: {
+    marginBottom: 20,
   },
-  inputContainer: {
-    marginBottom: spacing.md,
+  labelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
   },
   label: {
-    fontSize: typography.sizes.sm,
+    fontSize: 14,
     fontWeight: '600',
-    color: colors.text,
-    marginBottom: spacing.xs,
+    color: '#374151',
+    marginBottom: 8,
+  },
+  forgotText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0d9488',
   },
   input: {
-    backgroundColor: colors.white,
-    borderWidth: 2,
-    borderColor: colors.border,
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
     borderRadius: 12,
-    padding: spacing.md,
-    fontSize: typography.sizes.md,
-    color: colors.text,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: '#111827',
   },
   inputError: {
-    borderColor: '#ef4444',
-    borderWidth: 2,
-    backgroundColor: '#fef2f2',
+    borderColor: '#EF4444',
+    backgroundColor: '#FEF2F2',
+  },
+  errorContainer: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
   },
   errorText: {
-    color: '#dc2626',
-    fontSize: typography.sizes.sm,
-    fontWeight: '600',
-    marginBottom: spacing.md,
-    paddingHorizontal: spacing.xs,
+    color: '#DC2626',
+    fontSize: 14,
+    fontWeight: '500',
   },
-  forgotPassword: {
-    alignSelf: 'flex-end',
-    marginBottom: spacing.lg,
-  },
-  forgotPasswordText: {
-    color: colors.primary,
-    fontSize: typography.sizes.sm,
-  },
-  button: {
-    backgroundColor: colors.primary,
+  loginButton: {
+    backgroundColor: '#0d9488',
     borderRadius: 12,
-    padding: spacing.md,
+    paddingVertical: 16,
     alignItems: 'center',
-    marginBottom: spacing.md,
+    marginTop: 8,
+    marginBottom: 20,
+    shadowColor: '#0d9488',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  buttonDisabled: {
-    opacity: 0.6,
+  loginButtonDisabled: {
+    opacity: 0.7,
   },
-  buttonText: {
-    color: colors.white,
-    fontSize: typography.sizes.md,
-    fontWeight: 'bold',
+  loginButtonText: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: spacing.lg,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  dividerText: {
-    marginHorizontal: spacing.md,
-    color: colors.textLight,
-    fontSize: typography.sizes.sm,
-  },
-  socialButton: {
-    backgroundColor: colors.white,
-    borderWidth: 2,
-    borderColor: colors.border,
-    borderRadius: 12,
-    padding: spacing.md,
-    alignItems: 'center',
-    marginBottom: spacing.sm,
-  },
-  socialButtonText: {
-    color: colors.text,
-    fontSize: typography.sizes.md,
-    fontWeight: '600',
-  },
-  footer: {
+  signupContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: spacing.lg,
+    alignItems: 'center',
   },
-  footerText: {
-    color: colors.textLight,
-    fontSize: typography.sizes.sm,
+  signupText: {
+    fontSize: 15,
+    color: '#6B7280',
   },
-  footerLink: {
-    color: colors.primary,
-    fontSize: typography.sizes.sm,
-    fontWeight: 'bold',
+  signupLink: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0d9488',
+  },
+  bottomSpacer: {
+    height: 40,
   },
 });
