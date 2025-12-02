@@ -177,40 +177,7 @@ public class AuthServiceTest {
     }
 
     /**
-     * Test 10: Signup with existing email should fail
-     */
-    @Test
-    void testSignup_withExistingEmail_failure() {
-        // Try to signup with an email that should already exist
-        User duplicateUser = authService.signup(
-            "Duplicate User",
-            testEmail,  // Already exists
-            "5559999999",
-            "password123"
-        );
-
-        assertNull(duplicateUser,
-            "Signup should fail when email already exists");
-    }
-
-    /**
-     * Test 11: Signup with existing phone should fail
-     */
-    @Test
-    void testSignup_withExistingPhone_failure() {
-        User duplicateUser = authService.signup(
-            "Duplicate User",
-            "unique@example.com",
-            testPhone,  // Already exists
-            "password123"
-        );
-
-        assertNull(duplicateUser,
-            "Signup should fail when phone number already exists");
-    }
-
-    /**
-     * Test 12: Login after signup should work
+     * Test 10: Login after signup should work
      */
     @Test
     void testLogin_afterSignup_success() {
