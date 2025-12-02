@@ -27,8 +27,8 @@ const getLocalIP = () => {
   // Example: 'http://192.168.0.193:8080/api' (current developer's IP)
   // Example: 'http://192.168.1.100:8080/api' (teammate's IP would be different)
 
-  // Use localhost for web development
-  return 'http://localhost:8080/api';
+  // Use your computer's IP for device testing
+  return 'http://10.129.221.36:8080/api';
 };
 
 export const API_BASE_URL = getLocalIP();
