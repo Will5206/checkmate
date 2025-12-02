@@ -8,11 +8,11 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Alert,
   ActivityIndicator,
+  StatusBar,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { signupUser } from '../services/authService';
-import { colors, spacing, typography } from '../styles/theme';
 
 
 
@@ -25,9 +25,9 @@ export default function SignupScreen({ navigation }) {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
-
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   const formatPhoneNumber = (text) => {
     const cleaned = text.replace(/\D/g, '');
@@ -48,43 +48,35 @@ export default function SignupScreen({ navigation }) {
   };
 
   const handleSignup = async () => {
+    setError(null);
+
     if (!name || !email || !phone || !password || !confirmPassword) {
-      Alert.alert('Error', 'Please fill in all fields');
+      setError('Please fill in all fields');
       return;
     }
 
     if (password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
+      setError('Passwords do not match');
       return;
     }
 
-
-
     if (password.length < 8) {
-      Alert.alert('Error', 'Password must be at least 8 characters');
+      setError('Password must be at least 8 characters');
       return;
     }
 
     setLoading(true);
     try {
       const result = await signupUser(name, email, phone, password);
-      
+
       if (result.success) {
-        Alert.alert(
-          'Success',
-          'Account created successfully!',
-          [
-            {
-              text: 'OK',
-              onPress: () => navigation.navigate('Login'),
-            },
-          ]
-        );
+        setError(null);
+        navigation.replace('Home');
       } else {
-        Alert.alert('Error', result.message || 'Signup failed');
+        setError(result.message || 'Account creation failed');
       }
     } catch (error) {
-      Alert.alert('Error', 'An error occurred. Please try again.');
+      setError('Network error - Please try again');
     } finally {
       setLoading(false);
     }
@@ -97,122 +89,155 @@ export default function SignupScreen({ navigation }) {
 
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" />
+      <LinearGradient
+        colors={['#0d9488', '#14b8a6', '#5eead4']}
+        style={styles.gradient}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
       >
-        <View style={styles.header}>
-          <Text style={styles.logo}>💰</Text>
-          <Text style={styles.title}>CheckMate</Text>
-          <Text style={styles.subtitle}>Split bills effortlessly</Text>
-        </View>
-
-        <View style={styles.form}>
-          <Text style={styles.welcomeText}>Create Account</Text>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Full Name</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your full name"
-              placeholderTextColor={colors.textLight}
-              value={name}
-              onChangeText={setName}
-            />
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Email</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your email"
-              placeholderTextColor={colors.textLight}
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-            />
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Phone Number</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="(555) 123-4567"
-              placeholderTextColor={colors.textLight}
-              value={phone}
-              onChangeText={handlePhoneChange}
-              keyboardType="phone-pad"
-              maxLength={14}
-            />
-          </View>
-
-
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Create a password"
-              placeholderTextColor={colors.textLight}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
-            <Text style={styles.hint}>Must be at least 8 characters</Text>
-          </View>
-
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Confirm Password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Confirm your password"
-              placeholderTextColor={colors.textLight}
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry
-            />
-          </View>
-
-          <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={handleSignup}
-            disabled={loading}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.keyboardView}
+        >
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
           >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>Create Account</Text>
-            )}
-          </TouchableOpacity>
+            {/* Header */}
+            <View style={styles.header}>
+              <View style={styles.brandContainer}>
+                <View style={styles.iconCircle}>
+                  <Text style={styles.iconText}>✓</Text>
+                </View>
+                <Text style={styles.brandName}>CheckMate</Text>
+              </View>
+              <Text style={styles.tagline}>Split bills, settle up instantly</Text>
+            </View>
 
-          <View style={styles.divider}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>OR</Text>
-            <View style={styles.dividerLine} />
-          </View>
+            {/* Signup Card */}
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Create Account</Text>
+              <Text style={styles.cardSubtitle}>Join CheckMate today</Text>
 
-          <TouchableOpacity style={styles.socialButton}>
-            <Text style={styles.socialButtonText}>🍎 Sign up with Apple</Text>
-          </TouchableOpacity>
+              <View style={styles.form}>
+                <View style={styles.inputWrapper}>
+                  <Text style={styles.label}>Full Name</Text>
+                  <TextInput
+                    style={[styles.input, error && styles.inputError]}
+                    placeholder="Enter your full name"
+                    placeholderTextColor="#9CA3AF"
+                    value={name}
+                    onChangeText={(text) => {
+                      setName(text);
+                      setError(null);
+                    }}
+                    editable={!loading}
+                  />
+                </View>
 
-          <TouchableOpacity style={styles.socialButton}>
-            <Text style={styles.socialButtonText}>🔍 Sign up with Google</Text>
-          </TouchableOpacity>
+                <View style={styles.inputWrapper}>
+                  <Text style={styles.label}>Email</Text>
+                  <TextInput
+                    style={[styles.input, error && styles.inputError]}
+                    placeholder="Enter your email"
+                    placeholderTextColor="#9CA3AF"
+                    value={email}
+                    onChangeText={(text) => {
+                      setEmail(text);
+                      setError(null);
+                    }}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    editable={!loading}
+                  />
+                </View>
 
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>Already have an account? </Text>
-            <TouchableOpacity onPress={() => navigation.navigate('Login')}>
-              <Text style={styles.footerLink}>Log in</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+                <View style={styles.inputWrapper}>
+                  <Text style={styles.label}>Phone Number</Text>
+                  <TextInput
+                    style={[styles.input, error && styles.inputError]}
+                    placeholder="(555) 123-4567"
+                    placeholderTextColor="#9CA3AF"
+                    value={phone}
+                    onChangeText={(text) => {
+                      handlePhoneChange(text);
+                      setError(null);
+                    }}
+                    keyboardType="phone-pad"
+                    maxLength={14}
+                    editable={!loading}
+                  />
+                </View>
+
+                <View style={styles.inputWrapper}>
+                  <Text style={styles.label}>Password</Text>
+                  <TextInput
+                    style={[styles.input, error && styles.inputError]}
+                    placeholder="Create a password"
+                    placeholderTextColor="#9CA3AF"
+                    value={password}
+                    onChangeText={(text) => {
+                      setPassword(text);
+                      setError(null);
+                    }}
+                    secureTextEntry
+                    editable={!loading}
+                  />
+                  <Text style={styles.hint}>Must be at least 8 characters</Text>
+                </View>
+
+                <View style={styles.inputWrapper}>
+                  <Text style={styles.label}>Confirm Password</Text>
+                  <TextInput
+                    style={[styles.input, error && styles.inputError]}
+                    placeholder="Confirm your password"
+                    placeholderTextColor="#9CA3AF"
+                    value={confirmPassword}
+                    onChangeText={(text) => {
+                      setConfirmPassword(text);
+                      setError(null);
+                    }}
+                    secureTextEntry
+                    editable={!loading}
+                  />
+                </View>
+
+                {error && (
+                  <View style={styles.errorContainer}>
+                    <Text style={styles.errorText}>{error}</Text>
+                  </View>
+                )}
+
+                <TouchableOpacity
+                  style={[styles.signupButton, loading && styles.signupButtonDisabled]}
+                  onPress={handleSignup}
+                  disabled={loading}
+                  activeOpacity={0.8}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.signupButtonText}>Create Account</Text>
+                  )}
+                </TouchableOpacity>
+
+                <View style={styles.loginContainer}>
+                  <Text style={styles.loginText}>Already have an account? </Text>
+                  <TouchableOpacity onPress={() => navigation.navigate('Login')}>
+                    <Text style={styles.loginLink}>Log in</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.bottomSpacer} />
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </LinearGradient>
+    </View>
   );
 }
 
@@ -220,120 +245,153 @@ export default function SignupScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+  },
+  gradient: {
+    flex: 1,
+  },
+  keyboardView: {
+    flex: 1,
   },
   scrollContent: {
     flexGrow: 1,
-    justifyContent: 'center',
-    padding: spacing.lg,
+    paddingHorizontal: 24,
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingBottom: 40,
   },
   header: {
     alignItems: 'center',
-    marginBottom: spacing.xl,
+    marginBottom: 40,
   },
-  logo: {
-    fontSize: 60,
-    marginBottom: spacing.sm,
+  brandContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
   },
-  title: {
-    fontSize: typography.sizes.xxl,
+  iconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  iconText: {
+    fontSize: 24,
     fontWeight: 'bold',
-    color: colors.primary,
-    marginBottom: spacing.xs,
+    color: '#fff',
   },
-  subtitle: {
-    fontSize: typography.sizes.md,
-    color: colors.textLight,
+  brandName: {
+    fontSize: 36,
+    fontWeight: '900',
+    color: '#fff',
+    letterSpacing: -0.5,
+  },
+  tagline: {
+    fontSize: 16,
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontWeight: '500',
+  },
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    padding: 28,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 8,
+  },
+  cardTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 6,
+  },
+  cardSubtitle: {
+    fontSize: 15,
+    color: '#6B7280',
+    marginBottom: 28,
   },
   form: {
     width: '100%',
   },
-  welcomeText: {
-    fontSize: typography.sizes.xl,
-    fontWeight: 'bold',
-    color: colors.text,
-    marginBottom: spacing.lg,
-    textAlign: 'center',
-  },
-  inputContainer: {
-    marginBottom: spacing.md,
+  inputWrapper: {
+    marginBottom: 16,
   },
   label: {
-    fontSize: typography.sizes.sm,
+    fontSize: 14,
     fontWeight: '600',
-    color: colors.text,
-    marginBottom: spacing.xs,
+    color: '#374151',
+    marginBottom: 8,
   },
   input: {
-    backgroundColor: colors.white,
-    borderWidth: 2,
-    borderColor: colors.border,
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1.5,
+    borderColor: '#E5E7EB',
     borderRadius: 12,
-    padding: spacing.md,
-    fontSize: typography.sizes.md,
-    color: colors.text,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: '#111827',
+  },
+  inputError: {
+    borderColor: '#EF4444',
+    backgroundColor: '#FEF2F2',
   },
   hint: {
-    fontSize: typography.sizes.xs,
-    color: colors.textLight,
-    marginTop: spacing.xs,
+    fontSize: 12,
+    color: '#9CA3AF',
+    marginTop: 6,
   },
-  button: {
-    backgroundColor: colors.primary,
+  errorContainer: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  errorText: {
+    color: '#DC2626',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  signupButton: {
+    backgroundColor: '#0d9488',
     borderRadius: 12,
-    padding: spacing.md,
+    paddingVertical: 16,
     alignItems: 'center',
-    marginBottom: spacing.md,
+    marginTop: 8,
+    marginBottom: 20,
+    shadowColor: '#0d9488',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  buttonDisabled: {
-    opacity: 0.6,
+  signupButtonDisabled: {
+    opacity: 0.7,
   },
-  buttonText: {
-    color: colors.white,
-    fontSize: typography.sizes.md,
-    fontWeight: 'bold',
+  signupButtonText: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: spacing.lg,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  dividerText: {
-    marginHorizontal: spacing.md,
-    color: colors.textLight,
-    fontSize: typography.sizes.sm,
-  },
-  socialButton: {
-    backgroundColor: colors.white,
-    borderWidth: 2,
-    borderColor: colors.border,
-    borderRadius: 12,
-    padding: spacing.md,
-    alignItems: 'center',
-    marginBottom: spacing.sm,
-  },
-  socialButtonText: {
-    color: colors.text,
-    fontSize: typography.sizes.md,
-    fontWeight: '600',
-  },
-  footer: {
+  loginContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: spacing.lg,
+    alignItems: 'center',
   },
-  footerText: {
-    color: colors.textLight,
-    fontSize: typography.sizes.sm,
+  loginText: {
+    fontSize: 15,
+    color: '#6B7280',
   },
-  footerLink: {
-    color: colors.primary,
-    fontSize: typography.sizes.sm,
-    fontWeight: 'bold',
+  loginLink: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0d9488',
+  },
+  bottomSpacer: {
+    height: 40,
   },
 });
