@@ -22,14 +22,14 @@ public class FriendshipDAO {
 
     /**
      * Add a new friendship between two users.
-     * Creates a pending friendship request by default.
+     * Auto-accepts the friendship immediately (no approval needed).
      *
      * @param userId1 First user's ID
      * @param userId2 Second user's ID
      * @return The created Friend object, or null if creation failed
      */
     public Friend addFriendship(String userId1, String userId2) {
-        String sql = "INSERT INTO friendships (user_id_1, user_id_2, status) VALUES (?, ?, 'pending')";
+        String sql = "INSERT INTO friendships (user_id_1, user_id_2, status) VALUES (?, ?, 'accepted')";
 
         try (Connection conn = dbConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {

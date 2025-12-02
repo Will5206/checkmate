@@ -31,10 +31,6 @@ function GroupPotsScreen() {
   return <PlaceholderScreen screenName="Group Pots" />;
 }
 
-function ScanReceiptScreen() {
-  return <HomeScreen />; // Using HomeScreen for now since it's the scan receipt functionality
-}
-
 export default function App() {
   return (
     <NavigationContainer>

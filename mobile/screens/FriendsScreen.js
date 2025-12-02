@@ -10,6 +10,7 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
+  RefreshControl,
 } from 'react-native';
 import { addFriendByEmail, getFriendsList, removeFriend } from '../services/friendsService';
 import BottomNavBar from '../components/BottomNavBar';
@@ -127,23 +128,51 @@ export default function FriendsScreen() {
     }
   };
 
+  const getInitials = (name) => {
+    if (!name) return '?';
+    return name
+      .split(' ')
+      .map(word => word[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
+  const getAvatarColor = (name) => {
+    const colors = ['#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#8B5CF6', '#EC4899'];
+    const index = (name || '').length % colors.length;
+    return colors[index];
+  };
+
   const renderFriendItem = ({ item }) => {
     const isRemoving = removingFriendId === (item.userId || item);
+    const initials = getInitials(item.name);
+    const avatarColor = getAvatarColor(item.name);
 
     return (
       <View style={[
         styles.friendItem,
         isRemoving && styles.friendItemRemoving
       ]}>
-        <View style={styles.friendInfo}>
-          <Text style={styles.friendName}>{item.name || 'Unknown'}</Text>
-          <Text style={styles.friendEmail}>{item.email || item}</Text>
+        <View style={styles.friendLeft}>
+          <View style={[styles.avatar, { backgroundColor: avatarColor }]}>
+            <Text style={styles.avatarText}>{initials}</Text>
+          </View>
+          <View style={styles.friendInfo}>
+            <Text style={styles.friendName}>{item.name || 'Unknown'}</Text>
+            <Text style={styles.friendEmail}>{item.email || item}</Text>
+          </View>
         </View>
         <TouchableOpacity
           style={styles.removeButton}
           onPress={() => handleRemoveFriend(item.userId || item, item.name || 'this friend')}
+          disabled={isRemoving}
         >
-          <Text style={styles.removeButtonText}>Remove</Text>
+          {isRemoving ? (
+            <ActivityIndicator size="small" color="#DC2626" />
+          ) : (
+            <Text style={styles.removeButtonText}>✕</Text>
+          )}
         </TouchableOpacity>
       </View>
     );
@@ -232,6 +261,15 @@ export default function FriendsScreen() {
               keyExtractor={(item, index) => item.userId || item || index.toString()}
               style={styles.friendsList}
               contentContainerStyle={styles.friendsListContent}
+              refreshControl={
+                <RefreshControl
+                  refreshing={isLoadingFriends}
+                  onRefresh={loadFriends}
+                  colors={['#059669']}
+                  tintColor="#059669"
+                />
+              }
+              showsVerticalScrollIndicator={false}
             />
           )}
         </View>
@@ -379,25 +417,46 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: 'white',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
-    marginBottom: 10,
+    marginBottom: 12,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: '#f3f4f6',
   },
   friendItemRemoving: {
-    backgroundColor: '#fee2e2',
+    backgroundColor: '#fef2f2',
     borderWidth: 2,
-    borderColor: '#dc2626',
+    borderColor: '#fecaca',
+    opacity: 0.7,
+  },
+  friendLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  avatarText: {
+    color: 'white',
+    fontSize: 18,
+    fontWeight: '700',
   },
   friendInfo: {
     flex: 1,
   },
   friendName: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '600',
     color: '#111827',
     marginBottom: 4,
@@ -407,14 +466,17 @@ const styles = StyleSheet.create({
     color: '#6B7280',
   },
   removeButton: {
-    backgroundColor: '#fee2e2',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 6,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
   },
   removeButtonText: {
-    color: '#dc2626',
-    fontSize: 14,
+    color: '#DC2626',
+    fontSize: 20,
     fontWeight: '600',
   },
 });
