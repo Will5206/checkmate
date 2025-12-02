@@ -65,8 +65,21 @@ export default function BillReview() {
     
     if (routeData) {
       try {
+        console.log('BillReview: Received routeData:', {
+          isFromActivity: routeIsFromActivity,
+          itemsCount: routeData.items ? routeData.items.length : 0,
+          items: routeData.items,
+          receiptId: routeReceiptId,
+        });
+        
         // Transform backend data to match our format
         const transformedData = transformReceiptData(routeData);
+        
+        console.log('BillReview: Transformed data:', {
+          itemsCount: transformedData.items.length,
+          items: transformedData.items,
+        });
+        
         setBillData(transformedData);
         if (!routeIsFromActivity) {
           setIsFromCamera(true);
@@ -156,10 +169,11 @@ export default function BillReview() {
     // Backend parser returns: items (with name, qty, price), subtotal, tax, total, merchant
     // Note: price in items might be per-item or line total - we'll treat it as per-item
     const items = (data.items || []).map((item, index) => ({
-      id: index + 1,
+      itemId: item.itemId || item.id || (index + 1), // Preserve itemId if present (needed for claiming)
+      id: item.itemId || item.id || (index + 1), // Use itemId if available, otherwise use index
       name: item.name || 'Unknown Item',
       price: parseFloat(item.price) || 0,  // Price per item
-      qty: item.qty || 1,
+      qty: item.qty || item.quantity || 1, // Support both qty and quantity
     }));
 
     const total = parseFloat(data.total) || 0;
@@ -283,49 +297,60 @@ export default function BillReview() {
             )}
           </View>
           <View style={styles.itemsList}>
-            {billData.items.map((item, index) => {
-              const itemId = item.itemId || item.id;
-              const isClaimed = itemId && itemAssignments[itemId] && itemAssignments[itemId] > 0;
-              
-              // Debug logging
-              if (isFromActivity && index === 0) {
-                console.log('First item - itemId:', itemId, 'isFromActivity:', isFromActivity, 'itemAssignments:', itemAssignments);
-              }
-              
-              return (
-                <View key={itemId || index}>
-                  <TouchableOpacity
-                    style={[styles.itemRow, isFromActivity && styles.itemRowClickable]}
-                    onPress={isFromActivity ? () => handleToggleItemClaim(itemId) : undefined}
-                    disabled={!isFromActivity}
-                    activeOpacity={isFromActivity ? 0.7 : 1}
-                  >
-                    <View style={styles.itemInfo}>
-                      <View style={styles.itemNameRow}>
-                        <Text style={styles.itemName}>{item.name}</Text>
-                        {isFromActivity && (
-                          <View style={[styles.claimBadge, isClaimed && styles.claimBadgeActive]}>
-                            <Ionicons 
-                              name={isClaimed ? "checkmark-circle" : "ellipse-outline"} 
-                              size={16} 
-                              color={isClaimed ? "#059669" : "#9CA3AF"} 
-                            />
-                            <Text style={[styles.claimBadgeText, isClaimed && styles.claimBadgeTextActive]}>
-                              {isClaimed ? "Claimed" : "Tap to claim"}
-                            </Text>
-                          </View>
+            {billData.items.length === 0 ? (
+              <View style={styles.emptyItemsContainer}>
+                <Text style={styles.emptyItemsText}>No items found</Text>
+                {isFromActivity && (
+                  <Text style={styles.emptyItemsSubtext}>
+                    This receipt may not have items loaded. Please check the backend logs.
+                  </Text>
+                )}
+              </View>
+            ) : (
+              billData.items.map((item, index) => {
+                const itemId = item.itemId || item.id;
+                const isClaimed = itemId && itemAssignments[itemId] && itemAssignments[itemId] > 0;
+                
+                // Debug logging
+                if (isFromActivity && index === 0) {
+                  console.log('BillReview: First item - itemId:', itemId, 'isFromActivity:', isFromActivity, 'itemAssignments:', itemAssignments);
+                }
+                
+                return (
+                  <View key={itemId || index}>
+                    <TouchableOpacity
+                      style={[styles.itemRow, isFromActivity && styles.itemRowClickable]}
+                      onPress={isFromActivity ? () => handleToggleItemClaim(itemId) : undefined}
+                      disabled={!isFromActivity}
+                      activeOpacity={isFromActivity ? 0.7 : 1}
+                    >
+                      <View style={styles.itemInfo}>
+                        <View style={styles.itemNameRow}>
+                          <Text style={styles.itemName}>{item.name}</Text>
+                          {isFromActivity && (
+                            <View style={[styles.claimBadge, isClaimed && styles.claimBadgeActive]}>
+                              <Ionicons 
+                                name={isClaimed ? "checkmark-circle" : "ellipse-outline"} 
+                                size={16} 
+                                color={isClaimed ? "#059669" : "#9CA3AF"} 
+                              />
+                              <Text style={[styles.claimBadgeText, isClaimed && styles.claimBadgeTextActive]}>
+                                {isClaimed ? "Claimed" : "Tap to claim"}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        {item.qty > 1 && (
+                          <Text style={styles.itemQty}>Qty: {item.qty}</Text>
                         )}
                       </View>
-                      {item.qty > 1 && (
-                        <Text style={styles.itemQty}>Qty: {item.qty}</Text>
-                      )}
-                    </View>
-                    <Text style={styles.itemPrice}>${(item.price * (item.qty || 1)).toFixed(2)}</Text>
-                  </TouchableOpacity>
-                  {index < billData.items.length - 1 && <View style={styles.separator} />}
-                </View>
-              );
-            })}
+                      <Text style={styles.itemPrice}>${(item.price * (item.qty || 1)).toFixed(2)}</Text>
+                    </TouchableOpacity>
+                    {index < billData.items.length - 1 && <View style={styles.separator} />}
+                  </View>
+                );
+              })
+            )}
           </View>
         </View>
 
@@ -698,6 +723,22 @@ const styles = StyleSheet.create({
     color: colors.textLight,
     fontStyle: 'italic',
     marginTop: spacing.sm,
+    textAlign: 'center',
+  },
+  emptyItemsContainer: {
+    padding: spacing.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyItemsText: {
+    fontSize: typography.sizes.md,
+    color: colors.textLight,
+    fontWeight: '600',
+    marginBottom: spacing.xs,
+  },
+  emptyItemsSubtext: {
+    fontSize: typography.sizes.sm,
+    color: colors.textLight,
     textAlign: 'center',
   },
 });

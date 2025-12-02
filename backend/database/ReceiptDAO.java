@@ -93,8 +93,10 @@ public class ReceiptDAO {
             try (ResultSet rs = pstmt.executeQuery()) {
                 if (rs.next()) {
                     Receipt receipt = mapResultSetToReceipt(rs);
-                    // Load items for this receipt
-                    receipt.getItems().addAll(getReceiptItems(receiptId));
+                    // Load items for this receipt using addItem() method
+                    for (ReceiptItem item : getReceiptItems(receiptId)) {
+                        receipt.addItem(item);
+                    }
                     return receipt;
                 }
             }
@@ -293,8 +295,10 @@ public class ReceiptDAO {
             try (ResultSet rs = pstmt.executeQuery()) {
                 while (rs.next()) {
                     Receipt receipt = mapResultSetToReceipt(rs);
-                    // Load items for this receipt
-                    receipt.getItems().addAll(getReceiptItems(receipt.getReceiptId()));
+                    // Load items for this receipt using addItem() method
+                    for (ReceiptItem item : getReceiptItems(receipt.getReceiptId())) {
+                        receipt.addItem(item);
+                    }
                     receipts.add(receipt);
                 }
             }
@@ -335,8 +339,10 @@ public class ReceiptDAO {
             try (ResultSet rs = pstmt.executeQuery()) {
                 while (rs.next()) {
                     Receipt receipt = mapResultSetToReceipt(rs);
-                    // Load items for this receipt
-                    receipt.getItems().addAll(getReceiptItems(receipt.getReceiptId()));
+                    // Load items for this receipt using addItem() method
+                    for (ReceiptItem item : getReceiptItems(receipt.getReceiptId())) {
+                        receipt.addItem(item);
+                    }
                     receipts.add(receipt);
                 }
             }

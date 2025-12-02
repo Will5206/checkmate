@@ -66,6 +66,13 @@ export default function ActivityScreen() {
   };
 
   const handleReceiptClick = (receipt) => {
+    console.log('ActivityScreen: Receipt clicked:', {
+      receiptId: receipt.receiptId,
+      merchantName: receipt.merchantName,
+      itemsCount: receipt.items ? receipt.items.length : 0,
+      items: receipt.items,
+    });
+    
     // Transform receipt data to match BillReview format
     const billData = {
       merchant: receipt.merchantName || 'Unknown Merchant',
@@ -77,11 +84,16 @@ export default function ActivityScreen() {
         itemId: item.itemId, // Use actual itemId from backend
         id: item.itemId, // Also set id for compatibility
         name: item.name,
-        qty: item.quantity || 1,
+        qty: item.quantity || item.qty || 1, // Support both quantity and qty
         price: item.price || 0,
       })),
       date: receipt.date ? new Date(receipt.date).toLocaleString() : 'Unknown date',
     };
+    
+    console.log('ActivityScreen: Transformed billData:', {
+      itemsCount: billData.items.length,
+      items: billData.items,
+    });
     
     // Navigate to BillReview screen with receipt data
     navigation.navigate('BillReview', { 
