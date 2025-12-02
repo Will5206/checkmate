@@ -36,7 +36,36 @@ if not OPENAI_API_KEY:
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 
-def encode_image(image_path: str) -> str:
+def encode_image(image_path: str, max_size: int = 2048) -> str:
+    """
+    Encode image to base64, with optional resizing for faster processing.
+    OpenAI vision models work well with smaller images, so we resize if needed.
+    This reduces API processing time and cost significantly.
+    """
+    # Open and check if resizing is needed
+    with Image.open(image_path) as img:
+        width, height = img.size
+        
+        # Resize if image is too large (reduces API processing time and cost)
+        if width > max_size or height > max_size:
+            # Maintain aspect ratio
+            if width > height:
+                new_width = max_size
+                new_height = int(height * (max_size / width))
+            else:
+                new_height = max_size
+                new_width = int(width * (max_size / height))
+            
+            # Resize and convert to RGB
+            img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            img_rgb = img_resized.convert("RGB")
+            
+            # Save resized image to temp file
+            temp_file = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+            img_rgb.save(temp_file.name, format="JPEG", quality=85, optimize=True)
+            image_path = temp_file.name
+    
+    # Encode to base64
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode("utf-8")
 
@@ -69,7 +98,8 @@ if not os.path.exists(original_path):
 
 try:
     jpeg_path = ensure_jpeg(original_path)
-    base64_image = encode_image(jpeg_path)
+    # Encode with automatic resizing for faster processing
+    base64_image = encode_image(jpeg_path, max_size=2048)  # Resize to max 2048px for faster API calls
 except Exception as e:
     error_msg = {"error": f"Failed to process image: {str(e)}"}
     print(json.dumps(error_msg), file=sys.stderr)
@@ -110,10 +140,10 @@ Rules:
   for that item.
 """
 
-# Call vision model
+# Call vision model - using gpt-4o-mini for faster/cheaper parsing (still very accurate)
 try:
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-4o-mini",  # Faster and cheaper than gpt-4o, still accurate for receipt parsing
         messages=[
             {
                 "role": "user",

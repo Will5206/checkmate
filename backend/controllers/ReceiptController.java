@@ -794,18 +794,12 @@ public class ReceiptController {
                 
                 ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
                 
-                // Check if item is already paid for
-                if (receiptDAO.isItemPaid(itemId)) {
-                    sendJson(exchange, 400, new JSONObject()
-                        .put("success", false)
-                        .put("message", "This item has already been paid for and cannot be claimed"));
-                    return;
-                }
-                
                 boolean success;
+                boolean isDelete = "DELETE".equals(exchange.getRequestMethod());
                 
-                if ("DELETE".equals(exchange.getRequestMethod())) {
-                    // Unclaim item - only if not paid
+                // Optimized: Check payment status and perform operation in one go
+                // For DELETE, check if paid before attempting unclaim
+                if (isDelete) {
                     Map<String, Object> paymentInfo = receiptDAO.getItemPaymentInfo(itemId);
                     if (paymentInfo != null) {
                         sendJson(exchange, 400, new JSONObject()
@@ -815,6 +809,13 @@ public class ReceiptController {
                     }
                     success = receiptDAO.unassignItemFromUser(itemId, userIdStr);
                 } else if ("POST".equals(exchange.getRequestMethod())) {
+                    // For POST, check if paid before attempting claim
+                    if (receiptDAO.isItemPaid(itemId)) {
+                        sendJson(exchange, 400, new JSONObject()
+                            .put("success", false)
+                            .put("message", "This item has already been paid for and cannot be claimed"));
+                        return;
+                    }
                     // Claim item
                     int quantity = Integer.parseInt(query.getOrDefault("quantity", "1"));
                     success = receiptDAO.assignItemToUser(itemId, userIdStr, quantity);
@@ -826,12 +827,12 @@ public class ReceiptController {
                 }
                 
                 if (success) {
-                    // Calculate updated amount owed
+                    // Calculate updated amount owed (optimized: single query)
                     float owedAmount = receiptDAO.calculateUserOwedAmount(receiptId, userIdStr);
                     
                     JSONObject resp = new JSONObject()
                         .put("success", true)
-                        .put("message", "DELETE".equals(exchange.getRequestMethod()) ? "Item unclaimed" : "Item claimed")
+                        .put("message", isDelete ? "Item unclaimed" : "Item claimed")
                         .put("owedAmount", owedAmount);
                     sendJson(exchange, 200, resp);
                 } else {
@@ -1110,9 +1111,28 @@ public class ReceiptController {
                 // Check if receipt should be marked as completed
                 boolean isCompleted = receiptDAO.checkAndMarkReceiptCompleted(receiptId);
                 
-                // Get updated payment status
-                float newPaidAmount = receiptDAO.getPaidAmount(receiptId, userIdStr);
-                float newOwedAmount = receiptDAO.calculateUserOwedAmount(receiptId, userIdStr);
+                // Optimized: Calculate new amounts (we know paidAmount = old paidAmount + remainingAmount)
+                float newPaidAmount = paidAmount + remainingAmount;
+                float newOwedAmount = owedAmount - remainingAmount; // Should be 0 or close to 0
+                
+                // Get user's name for payment info (needed for item payment display)
+                database.UserDAO userDAO = new database.UserDAO();
+                models.User payer = userDAO.findUserById(userIdStr);
+                String payerName = payer != null ? payer.getName() : "You";
+                
+                // Build item payment info for items that were just marked as paid
+                // This avoids frontend needing to reload all assignments
+                JSONObject itemPaymentInfo = new JSONObject();
+                Map<Integer, Integer> userAssignments = receiptDAO.getItemAssignmentsForUser(receiptId, userIdStr);
+                long currentTime = System.currentTimeMillis();
+                for (Map.Entry<Integer, Integer> entry : userAssignments.entrySet()) {
+                    int itemId = entry.getKey();
+                    JSONObject paymentInfo = new JSONObject()
+                        .put("paidBy", userIdStr)
+                        .put("payerName", payerName)
+                        .put("paidAt", currentTime);
+                    itemPaymentInfo.put(String.valueOf(itemId), paymentInfo);
+                }
                 
                 JSONObject resp = new JSONObject()
                     .put("success", true)
@@ -1120,7 +1140,8 @@ public class ReceiptController {
                     .put("amountPaid", remainingAmount)
                     .put("paidAmount", newPaidAmount)
                     .put("owedAmount", newOwedAmount)
-                    .put("receiptCompleted", isCompleted);
+                    .put("receiptCompleted", isCompleted)
+                    .put("itemPaymentInfo", itemPaymentInfo); // Include payment info to avoid reload
                 
                 sendJson(exchange, 200, resp);
                 

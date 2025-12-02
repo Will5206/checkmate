@@ -49,6 +49,7 @@ export default function BillReview() {
   const [itemPaymentInfo, setItemPaymentInfo] = useState({}); // itemId -> {paidBy, payerName, paidAt}
   const [owedAmount, setOwedAmount] = useState(0);
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
+  const [claimingItems, setClaimingItems] = useState(new Set()); // Track items being claimed to prevent double-clicks
 
   // Check for parsed receipt data from route params or AsyncStorage
   useEffect(() => {
@@ -155,7 +156,25 @@ export default function BillReview() {
   const handleToggleItemClaim = async (itemId) => {
     if (!receiptId) return;
     
+    // Prevent double-clicks and concurrent claims on the same item
+    if (claimingItems.has(itemId)) {
+      return; // Already processing this item
+    }
+    
     const isClaimed = itemAssignments[itemId] && itemAssignments[itemId] > 0;
+    
+    // Mark item as being processed
+    setClaimingItems(prev => new Set(prev).add(itemId));
+    
+    // Optimistic update: Update UI immediately before API call completes
+    const previousAssignments = { ...itemAssignments };
+    const newAssignments = { ...itemAssignments };
+    if (isClaimed) {
+      delete newAssignments[itemId];
+    } else {
+      newAssignments[itemId] = 1;
+    }
+    setItemAssignments(newAssignments); // Update UI immediately - instant feedback!
     
     try {
       let response;
@@ -166,23 +185,29 @@ export default function BillReview() {
       }
       
       if (response.success) {
-        // Update local state
-        const newAssignments = { ...itemAssignments };
-        if (isClaimed) {
-          delete newAssignments[itemId];
-        } else {
-          newAssignments[itemId] = 1;
-        }
+        // Update with actual values from server
         setItemAssignments(newAssignments);
         setOwedAmount(response.owedAmount || 0);
-        // Reload payment info to get latest status
-        loadItemAssignments();
+        // No reload needed - optimistic update already done
       } else {
+        // Rollback optimistic update on error
+        setItemAssignments(previousAssignments);
         Alert.alert('Error', response.message || 'Failed to update item claim');
+        // Don't reload - just rollback is enough, avoids flickering
       }
     } catch (error) {
+      // Rollback optimistic update on error
+      setItemAssignments(previousAssignments);
       console.error('Error toggling item claim:', error);
       Alert.alert('Error', 'Failed to update item claim');
+      // Don't reload - just rollback is enough, avoids flickering
+    } finally {
+      // Remove from claiming set so item can be clicked again
+      setClaimingItems(prev => {
+        const next = new Set(prev);
+        next.delete(itemId);
+        return next;
+      });
     }
   };
 
@@ -201,11 +226,16 @@ export default function BillReview() {
               const response = await payReceipt(receiptId);
               
               if (response.success) {
-                // Update local state
+                // Optimistic update: Update UI immediately
                 setOwedAmount(response.owedAmount || 0);
                 
-                // Reload item assignments to get updated payment status (including paid items)
-                await loadItemAssignments();
+                // Update item payment info from response (avoids full reload)
+                if (response.itemPaymentInfo) {
+                  setItemPaymentInfo(prev => ({
+                    ...prev,
+                    ...response.itemPaymentInfo
+                  }));
+                }
                 
                 // Show success message
                 const message = response.receiptCompleted
@@ -399,17 +429,20 @@ export default function BillReview() {
                   console.log('BillReview: First item - itemId:', itemId, 'isFromActivity:', isFromActivity, 'itemAssignments:', itemAssignments, 'isPaid:', isPaid);
                 }
                 
+                const isClaiming = claimingItems.has(itemId);
+                
                 return (
                   <View key={itemId || index}>
                     <TouchableOpacity
                       style={[
                         styles.itemRow, 
                         isFromActivity && !isPaid && styles.itemRowClickable,
-                        isPaid && styles.itemRowPaid
+                        isPaid && styles.itemRowPaid,
+                        isClaiming && styles.itemRowProcessing
                       ]}
-                      onPress={isFromActivity && !isPaid ? () => handleToggleItemClaim(itemId) : undefined}
-                      disabled={!isFromActivity || isPaid}
-                      activeOpacity={isFromActivity && !isPaid ? 0.7 : 1}
+                      onPress={isFromActivity && !isPaid && !isClaiming ? () => handleToggleItemClaim(itemId) : undefined}
+                      disabled={!isFromActivity || isPaid || isClaiming}
+                      activeOpacity={isFromActivity && !isPaid && !isClaiming ? 0.7 : 1}
                     >
                       <View style={styles.itemInfo}>
                         <View style={styles.itemNameRow}>
@@ -785,6 +818,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginVertical: 2,
     opacity: 0.8,
+  },
+  itemRowProcessing: {
+    opacity: 0.6,
   },
   itemNameRow: {
     flexDirection: 'row',
