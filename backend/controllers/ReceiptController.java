@@ -674,10 +674,21 @@ public class ReceiptController {
                 
                 // Get all receipts for this user (accepted, declined, or uploaded)
                 List<Receipt> receipts = receiptService.getAllReceiptsForUser(userIdStr);
+                ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
                 
                 JSONArray receiptsArray = new JSONArray();
                 for (Receipt receipt : receipts) {
                     JSONObject receiptJson = buildReceiptJson(receipt);
+                    
+                    // Add payment status for this user
+                    float owedAmount = receiptDAO.calculateUserOwedAmount(receipt.getReceiptId(), userIdStr);
+                    float paidAmount = receiptDAO.getPaidAmount(receipt.getReceiptId(), userIdStr);
+                    boolean hasPaid = paidAmount >= owedAmount - 0.01f; // Allow small rounding differences
+                    
+                    receiptJson.put("userOwedAmount", owedAmount);
+                    receiptJson.put("userPaidAmount", paidAmount);
+                    receiptJson.put("userHasPaid", hasPaid);
+                    
                     receiptsArray.put(receiptJson);
                 }
                 
@@ -818,6 +829,37 @@ public class ReceiptController {
                     }
                     // Claim item
                     int quantity = Integer.parseInt(query.getOrDefault("quantity", "1"));
+                    
+                    // Get item info to validate quantity
+                    models.ReceiptItem item = receiptDAO.getReceiptItemById(itemId);
+                    if (item == null) {
+                        sendJson(exchange, 400, new JSONObject()
+                            .put("success", false)
+                            .put("message", "Item not found"));
+                        return;
+                    }
+                    
+                    // Get current user's claimed quantity
+                    int userCurrentQty = receiptDAO.getUserClaimedQuantity(itemId, userIdStr);
+                    int totalClaimedByOthers = receiptDAO.getTotalClaimedQuantity(itemId) - userCurrentQty;
+                    int availableQty = item.getQuantity() - totalClaimedByOthers;
+                    
+                    // Validate quantity
+                    if (quantity <= 0) {
+                        sendJson(exchange, 400, new JSONObject()
+                            .put("success", false)
+                            .put("message", "Quantity must be greater than 0"));
+                        return;
+                    }
+                    
+                    if (quantity > availableQty) {
+                        sendJson(exchange, 400, new JSONObject()
+                            .put("success", false)
+                            .put("message", String.format("Cannot claim %d. Only %d available (item quantity: %d, already claimed by others: %d)", 
+                                quantity, availableQty, item.getQuantity(), totalClaimedByOthers)));
+                        return;
+                    }
+                    
                     success = receiptDAO.assignItemToUser(itemId, userIdStr, quantity);
                 } else {
                     sendJson(exchange, 405, new JSONObject()
@@ -898,22 +940,36 @@ public class ReceiptController {
                 }
                 
                 // Build item payment info (which items are paid and by whom)
+                // Group by itemId - if ANY assignment for an item is paid, the item is paid
                 JSONObject itemPaymentInfo = new JSONObject();
+                Map<Integer, Map<String, Object>> itemPaymentMap = new HashMap<>();
+                
                 for (Map<String, Object> assignment : allAssignments) {
                     int itemId = (Integer) assignment.get("itemId");
                     Boolean isPaid = (Boolean) assignment.get("isPaid");
-                    if (isPaid) {
+                    if (isPaid && !itemPaymentMap.containsKey(itemId)) {
+                        // This item is paid - get the payer info
                         String paidByUserId = (String) assignment.get("paidBy");
                         // Get payer's name
                         models.User payer = userDAO.findUserById(paidByUserId);
                         String payerName = payer != null ? payer.getName() : "Unknown";
                         
-                        JSONObject paymentInfo = new JSONObject()
-                            .put("paidBy", paidByUserId)
-                            .put("payerName", payerName)
-                            .put("paidAt", assignment.get("paidAt"));
-                        itemPaymentInfo.put(String.valueOf(itemId), paymentInfo);
+                        Map<String, Object> paymentInfo = new HashMap<>();
+                        paymentInfo.put("paidBy", paidByUserId);
+                        paymentInfo.put("payerName", payerName);
+                        paymentInfo.put("paidAt", assignment.get("paidAt"));
+                        itemPaymentMap.put(itemId, paymentInfo);
                     }
+                }
+                
+                // Convert to JSONObject
+                for (Map.Entry<Integer, Map<String, Object>> entry : itemPaymentMap.entrySet()) {
+                    Map<String, Object> paymentInfo = entry.getValue();
+                    JSONObject paymentJson = new JSONObject()
+                        .put("paidBy", paymentInfo.get("paidBy"))
+                        .put("payerName", paymentInfo.get("payerName"))
+                        .put("paidAt", paymentInfo.get("paidAt"));
+                    itemPaymentInfo.put(String.valueOf(entry.getKey()), paymentJson);
                 }
                 
                 JSONObject resp = new JSONObject()

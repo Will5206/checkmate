@@ -65,6 +65,31 @@ export async function signupUser(name, email, phone, password) {
     });
     
     const data = await response.json();
+    
+    // If signup successful, automatically log the user in
+    if (data.success && data.userId) {
+      // Automatically login with the same credentials
+      const loginResult = await loginUser(email, password);
+      
+      if (loginResult.success) {
+        // Login successful - session is now stored
+        return {
+          success: true,
+          message: 'Account created and logged in successfully',
+          userId: loginResult.userId,
+          name: loginResult.name,
+          email: loginResult.email,
+        };
+      } else {
+        // Signup succeeded but login failed - still return success but user needs to login manually
+        return {
+          success: true,
+          message: 'Account created successfully. Please log in.',
+          userId: data.userId,
+        };
+      }
+    }
+    
     return data;
     
   } catch (error) {

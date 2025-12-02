@@ -116,25 +116,100 @@ public class ReceiptDAO {
      * @param quantity Quantity of this item to assign (default 1)
      * @return true if assignment was successful, false otherwise
      */
-    public boolean assignItemToUser(int itemId, String userId, int quantity) {
-        // First get receipt_id from item
-        String getReceiptSql = "SELECT receipt_id FROM receipt_items WHERE item_id = ?";
-        int receiptId = -1;
+    /**
+     * Get the total quantity already claimed for an item across all users.
+     * 
+     * @param itemId The item ID
+     * @return Total quantity claimed, or 0 if none
+     */
+    public int getTotalClaimedQuantity(int itemId) {
+        String sql = "SELECT COALESCE(SUM(quantity), 0) as total_claimed " +
+                     "FROM item_assignments " +
+                     "WHERE item_id = ? AND paid_by IS NULL"; // Only count unpaid claims
         
         try (Connection conn = dbConnection.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(getReceiptSql)) {
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, itemId);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt("total_claimed");
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error getting total claimed quantity: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return 0;
+    }
+
+    /**
+     * Get the quantity currently claimed by a specific user for an item.
+     * 
+     * @param itemId The item ID
+     * @param userId The user ID
+     * @return Quantity claimed by this user, or 0 if none
+     */
+    public int getUserClaimedQuantity(int itemId, String userId) {
+        String sql = "SELECT COALESCE(quantity, 0) as quantity " +
+                     "FROM item_assignments " +
+                     "WHERE item_id = ? AND user_id = ?";
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, itemId);
+            pstmt.setString(2, userId);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt("quantity");
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error getting user claimed quantity: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return 0;
+    }
+
+    public boolean assignItemToUser(int itemId, String userId, int quantity) {
+        // First get receipt_id and item quantity from item
+        String getItemSql = "SELECT receipt_id, quantity as item_quantity FROM receipt_items WHERE item_id = ?";
+        int receiptId = -1;
+        int itemQuantity = 0;
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(getItemSql)) {
             pstmt.setInt(1, itemId);
             try (ResultSet rs = pstmt.executeQuery()) {
                 if (rs.next()) {
                     receiptId = rs.getInt("receipt_id");
+                    itemQuantity = rs.getInt("item_quantity");
                 } else {
                     System.err.println("Item not found: " + itemId);
                     return false;
                 }
             }
         } catch (SQLException e) {
-            System.err.println("Error getting receipt_id for item: " + e.getMessage());
+            System.err.println("Error getting item info: " + e.getMessage());
             return false;
+        }
+        
+        // Get current user's claimed quantity
+        int userCurrentQty = getUserClaimedQuantity(itemId, userId);
+        // Get total claimed quantity by all users (excluding this user's current claim)
+        int totalClaimedByOthers = getTotalClaimedQuantity(itemId) - userCurrentQty;
+        
+        // Validate: new total claimed cannot exceed item quantity
+        int newTotalClaimed = totalClaimedByOthers + quantity;
+        if (newTotalClaimed > itemQuantity) {
+            System.err.println("Cannot claim " + quantity + " of item " + itemId + 
+                             ". Item has quantity " + itemQuantity + 
+                             ", already claimed: " + totalClaimedByOthers + 
+                             " by others, user currently has: " + userCurrentQty);
+            return false; // Validation failed
         }
         
         // Insert or update assignment
@@ -447,12 +522,14 @@ public class ReceiptDAO {
      * @return List of Receipt objects with participant status information
      */
     public List<Receipt> getAllReceiptsForUser(String userId) {
-        // Get receipts where user is a participant (accepted or declined) or uploaded by them
+        // Get receipts where user is a participant (accepted or completed) or uploaded by them
+        // Filter to only show accepted and completed receipts (exclude declined and pending)
         String sql = "SELECT DISTINCT r.* " +
                      "FROM receipts r " +
                      "LEFT JOIN receipt_participants rp ON r.receipt_id = rp.receipt_id AND rp.user_id = ? " +
-                     "WHERE (rp.user_id = ? AND rp.status IN ('accepted', 'declined')) " +
+                     "WHERE (rp.user_id = ? AND rp.status = 'accepted') " +
                      "   OR r.uploaded_by = ? " +
+                     "   OR r.status = 'completed' " +
                      "ORDER BY r.created_at DESC";
         
         List<Receipt> receipts = new ArrayList<>();

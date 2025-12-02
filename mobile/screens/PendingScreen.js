@@ -82,7 +82,38 @@ export default function PendingScreen() {
       const response = await acceptReceipt(receiptId);
       
       if (response.success) {
-        Alert.alert('Success', 'Receipt accepted!');
+        // Find the receipt data to navigate with
+        const receipt = receipts.find(r => r.receiptId === receiptId);
+        
+        if (receipt) {
+          // Transform receipt data to match BillReview format
+          const billData = {
+            merchant: receipt.merchantName || 'Unknown Merchant',
+            total: receipt.totalAmount || 0,
+            subtotal: (receipt.totalAmount || 0) - (receipt.taxAmount || 0) - (receipt.tipAmount || 0),
+            tax: receipt.taxAmount || 0,
+            tip: receipt.tipAmount || 0,
+            items: (receipt.items || []).map(item => ({
+              itemId: item.itemId,
+              id: item.itemId,
+              name: item.name,
+              qty: item.quantity || item.qty || 1,
+              price: item.price || 0,
+            })),
+            date: receipt.date ? new Date(receipt.date).toLocaleString() : 'Unknown date',
+          };
+          
+          // Navigate to BillReview screen
+          navigation.navigate('BillReview', {
+            data: billData,
+            receiptId: receipt.receiptId,
+            uploadedBy: receipt.uploadedBy,
+            isFromActivity: true,
+          });
+        } else {
+          Alert.alert('Success', 'Receipt accepted!');
+        }
+        
         // Remove from list
         setReceipts(prev => prev.filter(r => r.receiptId !== receiptId));
       } else {

@@ -101,6 +101,7 @@ export default function ActivityScreen() {
       receiptId: receipt.receiptId,
       uploadedBy: receipt.uploadedBy, // Pass uploadedBy to check if user is uploader
       isFromActivity: true, // Flag to indicate this is from activity (enables item claiming)
+      userHasPaid: receipt.userHasPaid || false, // Pass payment status
     });
   };
 
@@ -108,6 +109,7 @@ export default function ActivityScreen() {
     const status = receipt.status || 'pending';
     const isCompleted = status === 'completed';
     const isAccepted = status === 'accepted' || isCompleted;
+    const userHasPaid = receipt.userHasPaid || false; // Check if current user has paid
     const itemCount = receipt.items ? receipt.items.length : 0;
     
     return (
@@ -146,15 +148,17 @@ export default function ActivityScreen() {
             </Text>
             <View style={[
               styles.paidBadge, 
-              !isAccepted && styles.pendingBadge,
-              isCompleted && styles.completedBadge
+              !isAccepted && !userHasPaid && styles.pendingBadge,
+              isCompleted && styles.completedBadge,
+              userHasPaid && !isCompleted && styles.paidStatusBadge
             ]}>
               <Text style={[
                 styles.paidBadgeText, 
-                !isAccepted && styles.pendingBadgeText,
-                isCompleted && styles.completedBadgeText
+                !isAccepted && !userHasPaid && styles.pendingBadgeText,
+                isCompleted && styles.completedBadgeText,
+                userHasPaid && !isCompleted && styles.paidStatusBadgeText
               ]}>
-                {isCompleted ? 'Completed' : isAccepted ? 'Accepted' : 'Pending'}
+                {isCompleted ? 'Completed' : userHasPaid ? 'Paid' : isAccepted ? 'Accepted' : 'Pending'}
               </Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
@@ -329,6 +333,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#D1FAE5',
   },
   completedBadgeText: {
+    color: '#059669',
+    fontWeight: '600',
+  },
+  paidStatusBadge: {
+    backgroundColor: '#D1FAE5',
+  },
+  paidStatusBadgeText: {
     color: '#059669',
     fontWeight: '600',
   },
