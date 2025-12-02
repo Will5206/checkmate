@@ -8,7 +8,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { loginUser } from '../services/authService';
@@ -24,25 +23,29 @@ export default function LoginScreen({ navigation }) {
   const [emailOrPhone, setEmailOrPhone] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   const handleLogin = async () => {
+    setError(null); // Clear previous errors
+
     if (!emailOrPhone || !password) {
-      Alert.alert('Error', 'Please fill in all fields');
+      setError('Please fill in all fields');
       return;
     }
 
     setLoading(true);
     try {
       const result = await loginUser(emailOrPhone, password);
-      
+
       if (result.success) {
-        Alert.alert('Success', 'Login successful!');
+        setError(null);
         navigation.replace('Home');
       } else {
-        Alert.alert('Error', result.message || 'Login failed');
+        // Show error with red styling
+        setError('❌ Email or password is incorrect');
       }
     } catch (error) {
-      Alert.alert('Error', 'An error occurred. Please try again.');
+      setError('❌ Network error - Please try again');
     } finally {
       setLoading(false);
     }
@@ -72,29 +75,39 @@ export default function LoginScreen({ navigation }) {
           <View style={styles.inputContainer}>
             <Text style={styles.label}>Email or Phone Number</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, error && styles.inputError]}
               placeholder="Enter your email or phone"
               placeholderTextColor={colors.textLight}
               value={emailOrPhone}
-              onChangeText={setEmailOrPhone}
+              onChangeText={(text) => {
+                setEmailOrPhone(text);
+                setError(null); // Clear error when user types
+              }}
               autoCapitalize="none"
               keyboardType="email-address"
+              editable={!loading}
             />
           </View>
 
           <View style={styles.inputContainer}>
             <Text style={styles.label}>Password</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, error && styles.inputError]}
               placeholder="Enter your password"
               placeholderTextColor={colors.textLight}
-
-              
               value={password}
-              onChangeText={setPassword}
+              onChangeText={(text) => {
+                setPassword(text);
+                setError(null); // Clear error when user types
+              }}
               secureTextEntry
+              editable={!loading}
             />
           </View>
+
+          {error && (
+            <Text style={styles.errorText}>{error}</Text>
+          )}
 
           <TouchableOpacity style={styles.forgotPassword}>
             <Text style={styles.forgotPasswordText}>Forgot password?</Text>
@@ -193,6 +206,18 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     fontSize: typography.sizes.md,
     color: colors.text,
+  },
+  inputError: {
+    borderColor: '#ef4444',
+    borderWidth: 2,
+    backgroundColor: '#fef2f2',
+  },
+  errorText: {
+    color: '#dc2626',
+    fontSize: typography.sizes.sm,
+    fontWeight: '600',
+    marginBottom: spacing.md,
+    paddingHorizontal: spacing.xs,
   },
   forgotPassword: {
     alignSelf: 'flex-end',

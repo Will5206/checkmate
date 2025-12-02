@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import LoginScreen from './screens/LoginScreen';
 import SignupScreen from './screens/SignupScreen';
 import ScanReceiptScreen from './screens/ScanReceiptScreen';
@@ -11,6 +11,7 @@ import FriendsScreen from './screens/FriendsScreen';
 import PendingScreen from './screens/PendingScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import BottomNavBar from './components/BottomNavBar';
+import { isUserLoggedIn } from './services/authService';
 
 const Stack = createNativeStackNavigator();
 
@@ -32,10 +33,37 @@ function GroupPotsScreen() {
 }
 
 export default function App() {
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  useEffect(() => {
+    checkAuthStatus();
+  }, []);
+
+  const checkAuthStatus = async () => {
+    try {
+      const loggedIn = await isUserLoggedIn();
+      setIsAuthenticated(loggedIn);
+    } catch (error) {
+      console.error('Error checking auth status:', error);
+      setIsAuthenticated(false);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#0d9488" />
+      </View>
+    );
+  }
+
   return (
     <NavigationContainer>
       <Stack.Navigator
-        initialRouteName="Login"
+        initialRouteName={isAuthenticated ? "Home" : "Login"}
         screenOptions={{
           headerShown: false,
           animation: 'none',
@@ -57,6 +85,12 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f9fafb',
+  },
   placeholderWrapper: {
     flex: 1,
     backgroundColor: '#f9fafb',
