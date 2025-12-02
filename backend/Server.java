@@ -1,6 +1,7 @@
 // No package (default package)
 
 import controllers.AuthController;
+import controllers.BalanceController;
 import controllers.FriendController;
 import controllers.ReceiptController;
 import database.DatabaseConnection;
@@ -58,7 +59,8 @@ public class Server {
             server.createContext("/api/receipts/activity", new ReceiptController.GetActivityReceiptsHandler());
             server.createContext("/api/receipts/items/claim", new ReceiptController.ClaimItemHandler());
             server.createContext("/api/receipts/items/assignments", new ReceiptController.GetItemAssignmentsHandler());
-            
+            server.createContext("/api/balance", new BalanceController.GetBalanceHandler());
+
             //start server
             server.setExecutor(null);
             server.start();

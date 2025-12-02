@@ -13,20 +13,29 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomNavBar from '../components/BottomNavBar';
 import { colors, spacing, typography } from '../styles/theme';
 import { logoutUser } from '../services/authService';
+import { getUserBalance } from '../services/balanceService';
 
 export default function ProfileScreen() {
   const navigation = useNavigation();
-  const [balance] = useState(247.83);
+  const [balance, setBalance] = useState(0.0);
   const [userName, setUserName] = useState('Mike Baron');
   const [userEmail, setUserEmail] = useState('mike.baron@email.com');
 
   useEffect(() => {
-    // Load user info from AsyncStorage
+    // Load user info and balance from AsyncStorage
     const loadUserInfo = async () => {
       const storedName = await AsyncStorage.getItem('userName');
       const storedEmail = await AsyncStorage.getItem('userEmail');
+      const storedUserId = await AsyncStorage.getItem('userId');
+
       if (storedName) setUserName(storedName);
       if (storedEmail) setUserEmail(storedEmail);
+
+      // Fetch balance from backend
+      if (storedUserId) {
+        const userBalance = await getUserBalance(storedUserId);
+        setBalance(userBalance);
+      }
     };
     loadUserInfo();
   }, []);
