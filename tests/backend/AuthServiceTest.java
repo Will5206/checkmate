@@ -231,6 +231,14 @@ public class AuthServiceTest {
         }
     }
 
+    /**
+     * Test 15: AuthService instance should not be null
+     */
+    @Test
+    void testAuthService_instanceNotNull() {
+        assertNotNull(authService, "AuthService instance should not be null");
+    }
+
     @AfterEach
     void cleanup() {
         // In a real test environment, you would clean up test data here
