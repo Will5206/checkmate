@@ -13,7 +13,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomNavBar from '../components/BottomNavBar';
 import { colors, spacing, typography } from '../styles/theme';
 import { logoutUser } from '../services/authService';
-import { getUserBalance } from '../services/balanceService';
+import { getUserBalance, addMoney, cashOut } from '../services/balanceService';
 
 export default function ProfileScreen() {
   const navigation = useNavigation();
@@ -60,6 +60,76 @@ export default function ProfileScreen() {
         },
       },
     ]);
+  };
+
+  const handleAddMoney = () => {
+    Alert.prompt(
+      'Add Money',
+      'Enter amount to add:',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Add',
+          onPress: async (amountText) => {
+            const amount = parseFloat(amountText);
+            if (isNaN(amount) || amount <= 0) {
+              Alert.alert('Error', 'Please enter a valid positive amount');
+              return;
+            }
+
+            const userId = await AsyncStorage.getItem('userId');
+            if (!userId) {
+              Alert.alert('Error', 'User not logged in');
+              return;
+            }
+
+            const response = await addMoney(userId, amount);
+            if (response.success) {
+              setBalance(response.balance);
+              Alert.alert('Success', `Added $${amount.toFixed(2)}. New balance: $${response.balance.toFixed(2)}`);
+            } else {
+              Alert.alert('Error', response.error || 'Failed to add money');
+            }
+          },
+        },
+      ],
+      'plain-text'
+    );
+  };
+
+  const handleCashOut = () => {
+    Alert.prompt(
+      'Cash Out',
+      'Enter amount to withdraw:',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Withdraw',
+          onPress: async (amountText) => {
+            const amount = parseFloat(amountText);
+            if (isNaN(amount) || amount <= 0) {
+              Alert.alert('Error', 'Please enter a valid positive amount');
+              return;
+            }
+
+            const userId = await AsyncStorage.getItem('userId');
+            if (!userId) {
+              Alert.alert('Error', 'User not logged in');
+              return;
+            }
+
+            const response = await cashOut(userId, amount);
+            if (response.success) {
+              setBalance(response.balance);
+              Alert.alert('Success', `Withdrew $${amount.toFixed(2)}. New balance: $${response.balance.toFixed(2)}`);
+            } else {
+              Alert.alert('Error', response.error || 'Failed to cash out');
+            }
+          },
+        },
+      ],
+      'plain-text'
+    );
   };
 
   const menuItems = [
@@ -120,11 +190,11 @@ export default function ProfileScreen() {
             <Text style={styles.balanceLabel}>CheckMate Balance</Text>
             <Text style={styles.balanceAmount}>${balance.toFixed(2)}</Text>
             <View style={styles.balanceActions}>
-              <TouchableOpacity style={styles.balanceButton}>
+              <TouchableOpacity style={styles.balanceButton} onPress={handleAddMoney}>
                 <Ionicons name="add-circle-outline" size={16} color="#fff" />
                 <Text style={styles.balanceButtonText}>Add Money</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.balanceButton}>
+              <TouchableOpacity style={styles.balanceButton} onPress={handleCashOut}>
                 <Ionicons name="remove-circle-outline" size={16} color="#fff" />
                 <Text style={styles.balanceButtonText}>Cash Out</Text>
               </TouchableOpacity>

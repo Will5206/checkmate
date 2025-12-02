@@ -323,3 +323,83 @@ export async function getItemAssignments(receiptId) {
     };
   }
 }
+
+/**
+ * Add participants to an existing receipt
+ * @param {number} receiptId - The receipt ID
+ * @param {Array<string>} participantEmails - Array of email addresses to add
+ * @returns {Promise<Object>} Response with success status
+ */
+export async function addParticipantsToReceipt(receiptId, participantEmails) {
+  try {
+    const userId = await AsyncStorage.getItem('userId');
+
+    if (!userId) {
+      return {
+        success: false,
+        message: 'User not logged in',
+      };
+    }
+
+    const response = await fetch(
+      `${API_BASE_URL}/receipts/add-participants?receiptId=${receiptId}&userId=${encodeURIComponent(userId)}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          participants: participantEmails,
+        }),
+      }
+    );
+
+    const data = await response.json();
+    return data;
+
+  } catch (error) {
+    console.error('Error adding participants:', error);
+    return {
+      success: false,
+      message: 'Network error. Please check your connection.',
+    };
+  }
+}
+
+/**
+ * Pay for a receipt
+ * @param {number} receiptId - The receipt ID
+ * @returns {Promise<Object>} Response with success status and payment details
+ */
+export async function payReceipt(receiptId) {
+  try {
+    const userId = await AsyncStorage.getItem('userId');
+
+    if (!userId) {
+      return {
+        success: false,
+        message: 'User not logged in',
+      };
+    }
+
+    const response = await fetch(
+      `${API_BASE_URL}/receipts/pay?receiptId=${receiptId}&userId=${encodeURIComponent(userId)}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    const data = await response.json();
+    return data;
+
+  } catch (error) {
+    console.error('Pay receipt error:', error);
+    return {
+      success: false,
+      message: 'Network error. Please check your connection.',
+    };
+  }
+}

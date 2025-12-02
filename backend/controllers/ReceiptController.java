@@ -539,6 +539,10 @@ public class ReceiptController {
                     }
                 }
                 
+                // Add uploader as participant (so they can claim items and pay)
+                receiptDAO.addReceiptParticipant(receipt.getReceiptId(), userIdStr);
+                validParticipantIds.add(userIdStr);
+                
                 // Convert participant emails to user IDs and add them
                 for (int i = 0; i < participantsArray.length(); i++) {
                     String email = participantsArray.getString(i).trim().toLowerCase();
@@ -549,11 +553,14 @@ public class ReceiptController {
                     if (participantUser != null) {
                         String participantUserId = participantUser.getUserId();
                         
-                        // Add participant to receipt
-                        boolean added = receiptDAO.addReceiptParticipant(receipt.getReceiptId(), participantUserId);
-                        
-                        if (added) {
-                            validParticipantIds.add(participantUserId);
+                        // Skip if it's the uploader (already added)
+                        if (!participantUserId.equals(userIdStr)) {
+                            // Add participant to receipt
+                            boolean added = receiptDAO.addReceiptParticipant(receipt.getReceiptId(), participantUserId);
+                            
+                            if (added) {
+                                validParticipantIds.add(participantUserId);
+                            }
                         }
                     }
                 }
@@ -692,9 +699,12 @@ public class ReceiptController {
      * Helper method to build a JSON object from a Receipt model.
      */
     private static JSONObject buildReceiptJson(Receipt receipt) {
+        ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
+        String uploadedByStr = receiptDAO.getReceiptUploadedBy(receipt.getReceiptId());
+        
         JSONObject receiptJson = new JSONObject()
             .put("receiptId", receipt.getReceiptId())
-            .put("uploadedBy", receipt.getUploadedBy())
+            .put("uploadedBy", uploadedByStr != null ? uploadedByStr : String.valueOf(receipt.getUploadedBy()))
             .put("merchantName", receipt.getMerchantName())
             .put("date", receipt.getDate().getTime())
             .put("totalAmount", receipt.getTotalAmount())
@@ -783,10 +793,26 @@ public class ReceiptController {
                 }
                 
                 ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
+                
+                // Check if item is already paid for
+                if (receiptDAO.isItemPaid(itemId)) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "This item has already been paid for and cannot be claimed"));
+                    return;
+                }
+                
                 boolean success;
                 
                 if ("DELETE".equals(exchange.getRequestMethod())) {
-                    // Unclaim item
+                    // Unclaim item - only if not paid
+                    Map<String, Object> paymentInfo = receiptDAO.getItemPaymentInfo(itemId);
+                    if (paymentInfo != null) {
+                        sendJson(exchange, 400, new JSONObject()
+                            .put("success", false)
+                            .put("message", "Cannot unclaim an item that has been paid for"));
+                        return;
+                    }
                     success = receiptDAO.unassignItemFromUser(itemId, userIdStr);
                 } else if ("POST".equals(exchange.getRequestMethod())) {
                     // Claim item
@@ -853,20 +879,47 @@ public class ReceiptController {
                 System.out.println("[ReceiptController] GetItemAssignmentsHandler - receiptId: " + receiptId + ", userId: " + userIdStr);
                 
                 ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
+                database.UserDAO userDAO = new database.UserDAO();
+                
+                // Get user's assignments
                 Map<Integer, Integer> assignments = receiptDAO.getItemAssignmentsForUser(receiptId, userIdStr);
                 float owedAmount = receiptDAO.calculateUserOwedAmount(receiptId, userIdStr);
                 
+                // Get all item assignments for receipt (to show payment status)
+                List<Map<String, Object>> allAssignments = receiptDAO.getAllItemAssignmentsForReceipt(receiptId);
+                
                 System.out.println("[ReceiptController] Found " + assignments.size() + " item assignments, owedAmount: " + owedAmount);
                 
+                // Build assignments JSON with payment info
                 JSONObject assignmentsJson = new JSONObject();
                 for (Map.Entry<Integer, Integer> entry : assignments.entrySet()) {
                     assignmentsJson.put(String.valueOf(entry.getKey()), entry.getValue());
                 }
                 
+                // Build item payment info (which items are paid and by whom)
+                JSONObject itemPaymentInfo = new JSONObject();
+                for (Map<String, Object> assignment : allAssignments) {
+                    int itemId = (Integer) assignment.get("itemId");
+                    Boolean isPaid = (Boolean) assignment.get("isPaid");
+                    if (isPaid) {
+                        String paidByUserId = (String) assignment.get("paidBy");
+                        // Get payer's name
+                        models.User payer = userDAO.findUserById(paidByUserId);
+                        String payerName = payer != null ? payer.getName() : "Unknown";
+                        
+                        JSONObject paymentInfo = new JSONObject()
+                            .put("paidBy", paidByUserId)
+                            .put("payerName", payerName)
+                            .put("paidAt", assignment.get("paidAt"));
+                        itemPaymentInfo.put(String.valueOf(itemId), paymentInfo);
+                    }
+                }
+                
                 JSONObject resp = new JSONObject()
                     .put("success", true)
                     .put("assignments", assignmentsJson)
-                    .put("owedAmount", owedAmount);
+                    .put("owedAmount", owedAmount)
+                    .put("itemPaymentInfo", itemPaymentInfo);
                 
                 System.out.println("[ReceiptController] Sending response: " + resp.toString());
                 sendJson(exchange, 200, resp);
@@ -876,6 +929,298 @@ public class ReceiptController {
                 sendJson(exchange, 500, new JSONObject()
                     .put("success", false)
                     .put("message", "Error getting item assignments: " + e.getMessage()));
+            }
+        }
+    }
+
+    /**
+     * Handler for paying for a receipt.
+     * POST /api/receipts/pay?receiptId=X&userId=Y
+     */
+    public static class PayReceiptHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            addCors(exchange);
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(200, -1);
+                return;
+            }
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                return;
+            }
+            
+            Map<String, String> query = parseQuery(exchange.getRequestURI());
+            try {
+                String userIdStr = query.getOrDefault("userId", "");
+                int receiptId = Integer.parseInt(query.getOrDefault("receiptId", "0"));
+                
+                if (userIdStr.isEmpty() || receiptId == 0) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "receiptId and userId are required"));
+                    return;
+                }
+                
+                ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
+                
+                // Calculate amount owed
+                float owedAmount = receiptDAO.calculateUserOwedAmount(receiptId, userIdStr);
+                float paidAmount = receiptDAO.getPaidAmount(receiptId, userIdStr);
+                float remainingAmount = owedAmount - paidAmount;
+                
+                if (remainingAmount <= 0) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "You have already paid your full amount"));
+                    return;
+                }
+                
+                // Check user balance
+                services.BalanceService balanceService = new services.BalanceService();
+                double currentBalance = balanceService.getCurrentBalance(userIdStr);
+                
+                if (currentBalance < remainingAmount) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", String.format("Insufficient balance. You have $%.2f, need $%.2f", currentBalance, remainingAmount)));
+                    return;
+                }
+                
+                // Get receipt uploader
+                String uploaderId = receiptDAO.getReceiptUploadedBy(receiptId);
+                if (uploaderId == null) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Receipt not found"));
+                    return;
+                }
+                
+                // Deduct from payer's balance
+                boolean balanceDeducted = balanceService.subtractFromBalance(
+                    userIdStr,
+                    remainingAmount,
+                    services.BalanceService.TYPE_PAYMENT_SENT,
+                    "Payment for receipt #" + receiptId,
+                    String.valueOf(receiptId),
+                    "receipt"
+                );
+                
+                if (!balanceDeducted) {
+                    sendJson(exchange, 500, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Failed to deduct balance"));
+                    return;
+                }
+                
+                // Add to uploader's balance
+                boolean balanceAdded = balanceService.addToBalance(
+                    uploaderId,
+                    remainingAmount,
+                    services.BalanceService.TYPE_PAYMENT_RECEIVED,
+                    "Payment received for receipt #" + receiptId,
+                    String.valueOf(receiptId),
+                    "receipt"
+                );
+                
+                if (!balanceAdded) {
+                    // Rollback: add back to payer (auto-refund)
+                    try {
+                        boolean refunded = balanceService.addToBalance(
+                            userIdStr,
+                            remainingAmount,
+                            services.BalanceService.TYPE_REFUND,
+                            "Refund due to payment processing error",
+                            String.valueOf(receiptId),
+                            "receipt"
+                        );
+                        if (!refunded) {
+                            System.err.println("CRITICAL: Failed to refund after payment processing error. User: " + userIdStr + ", Amount: " + remainingAmount);
+                        }
+                    } catch (Exception refundError) {
+                        System.err.println("CRITICAL: Exception during refund: " + refundError.getMessage());
+                        refundError.printStackTrace();
+                    }
+                    sendJson(exchange, 500, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Failed to process payment. Your balance has been refunded."));
+                    return;
+                }
+                
+                // Create transaction record
+                services.TransactionService transactionService = new services.TransactionService();
+                models.Transaction transaction = null;
+                try {
+                    transaction = transactionService.createTransaction(
+                        userIdStr,
+                        uploaderId,
+                        remainingAmount,
+                        services.TransactionService.TYPE_RECEIPT_PAYMENT,
+                        "Payment for receipt #" + receiptId,
+                        services.TransactionService.STATUS_COMPLETED,
+                        String.valueOf(receiptId)
+                    );
+                } catch (Exception txError) {
+                    System.err.println("Warning: Failed to create transaction record: " + txError.getMessage());
+                    // Don't fail payment if transaction record fails - balances are already updated
+                }
+                
+                // Record payment in receipt_participants
+                boolean paymentRecorded = false;
+                try {
+                    paymentRecorded = receiptDAO.recordPayment(receiptId, userIdStr, remainingAmount);
+                } catch (Exception recordError) {
+                    System.err.println("Warning: Failed to record payment in receipt_participants: " + recordError.getMessage());
+                    // If payment recording fails, we need to rollback since balances are updated but payment isn't recorded
+                    // This could lead to inconsistent state
+                    try {
+                        // Refund payer
+                        balanceService.addToBalance(
+                            userIdStr,
+                            remainingAmount,
+                            services.BalanceService.TYPE_REFUND,
+                            "Refund due to payment recording error",
+                            String.valueOf(receiptId),
+                            "receipt"
+                        );
+                        // Deduct from uploader
+                        balanceService.subtractFromBalance(
+                            uploaderId,
+                            remainingAmount,
+                            services.BalanceService.TYPE_REFUND,
+                            "Refund due to payment recording error",
+                            String.valueOf(receiptId),
+                            "receipt"
+                        );
+                        System.err.println("Rolled back payment due to recording failure");
+                    } catch (Exception rollbackError) {
+                        System.err.println("CRITICAL: Failed to rollback after payment recording error: " + rollbackError.getMessage());
+                        rollbackError.printStackTrace();
+                    }
+                    sendJson(exchange, 500, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Failed to record payment. Your balance has been refunded."));
+                    return;
+                }
+                
+                // Mark all items assigned to this user as paid
+                int itemsMarkedPaid = receiptDAO.markItemsAsPaid(receiptId, userIdStr);
+                System.out.println("Marked " + itemsMarkedPaid + " item assignments as paid for user " + userIdStr);
+                
+                // Check if receipt should be marked as completed
+                boolean isCompleted = receiptDAO.checkAndMarkReceiptCompleted(receiptId);
+                
+                // Get updated payment status
+                float newPaidAmount = receiptDAO.getPaidAmount(receiptId, userIdStr);
+                float newOwedAmount = receiptDAO.calculateUserOwedAmount(receiptId, userIdStr);
+                
+                JSONObject resp = new JSONObject()
+                    .put("success", true)
+                    .put("message", "Payment processed successfully")
+                    .put("amountPaid", remainingAmount)
+                    .put("paidAmount", newPaidAmount)
+                    .put("owedAmount", newOwedAmount)
+                    .put("receiptCompleted", isCompleted);
+                
+                sendJson(exchange, 200, resp);
+                
+            } catch (IllegalArgumentException e) {
+                sendJson(exchange, 400, new JSONObject()
+                    .put("success", false)
+                    .put("message", e.getMessage()));
+            } catch (Exception e) {
+                System.err.println("[ReceiptController] Error in PayReceiptHandler: " + e.getMessage());
+                e.printStackTrace();
+                sendJson(exchange, 500, new JSONObject()
+                    .put("success", false)
+                    .put("message", "Error processing payment: " + e.getMessage()));
+            }
+        }
+    }
+
+    /**
+     * Handler for adding participants to an existing receipt.
+     * POST /api/receipts/add-participants?receiptId=X&userId=Y
+     * Body: JSON with array of participant emails: {"participants": ["email1", "email2"]}
+     */
+    public static class AddParticipantsHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            addCors(exchange);
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(200, -1);
+                return;
+            }
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                return;
+            }
+            
+            Map<String, String> query = parseQuery(exchange.getRequestURI());
+            try {
+                String userIdStr = query.getOrDefault("userId", "");
+                int receiptId = Integer.parseInt(query.getOrDefault("receiptId", "0"));
+                
+                if (userIdStr.isEmpty() || receiptId == 0) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "receiptId and userId are required"));
+                    return;
+                }
+                
+                // Verify user is the uploader of this receipt
+                ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
+                String uploaderId = receiptDAO.getReceiptUploadedBy(receiptId);
+                
+                if (uploaderId == null || !uploaderId.equals(userIdStr)) {
+                    sendJson(exchange, 403, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Only the receipt uploader can add participants"));
+                    return;
+                }
+                
+                // Read request body
+                String requestBody = readRequestBody(exchange);
+                JSONObject json = new JSONObject(requestBody);
+                JSONArray participantsArray = json.getJSONArray("participants");
+                
+                // Convert participant emails to user IDs and add them
+                UserDAO userDAO = new UserDAO();
+                List<String> validParticipantIds = new ArrayList<>();
+                
+                for (int i = 0; i < participantsArray.length(); i++) {
+                    String email = participantsArray.getString(i).trim().toLowerCase();
+                    
+                    // Find user by email
+                    User participantUser = userDAO.findUserByEmail(email);
+                    
+                    if (participantUser != null) {
+                        String participantUserId = participantUser.getUserId();
+                        
+                        // Skip if it's the uploader (already added)
+                        if (!participantUserId.equals(userIdStr)) {
+                            // Add participant to receipt
+                            boolean added = receiptDAO.addReceiptParticipant(receiptId, participantUserId);
+                            
+                            if (added) {
+                                validParticipantIds.add(participantUserId);
+                            }
+                        }
+                    }
+                }
+                
+                JSONObject resp = new JSONObject()
+                    .put("success", true)
+                    .put("message", "Participants added successfully")
+                    .put("participantsAdded", validParticipantIds.size());
+                
+                sendJson(exchange, 200, resp);
+                
+            } catch (Exception e) {
+                e.printStackTrace();
+                sendJson(exchange, 400, new JSONObject()
+                    .put("success", false)
+                    .put("message", "Error adding participants: " + e.getMessage()));
             }
         }
     }

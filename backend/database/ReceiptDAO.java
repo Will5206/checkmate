@@ -216,6 +216,132 @@ public class ReceiptDAO {
     }
 
     /**
+     * Get all item assignments for a receipt with payment information.
+     * Returns assignments for all users, not just one.
+     * 
+     * @param receiptId The receipt ID
+     * @return List of maps containing item_id, user_id, quantity, paid_by, paid_at
+     */
+    public List<Map<String, Object>> getAllItemAssignmentsForReceipt(int receiptId) {
+        String sql = "SELECT item_id, user_id, quantity, paid_by, paid_at " +
+                     "FROM item_assignments " +
+                     "WHERE receipt_id = ?";
+        List<Map<String, Object>> assignments = new ArrayList<>();
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, receiptId);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> assignment = new HashMap<>();
+                    assignment.put("itemId", rs.getInt("item_id"));
+                    assignment.put("userId", rs.getString("user_id"));
+                    assignment.put("quantity", rs.getInt("quantity"));
+                    String paidBy = rs.getString("paid_by");
+                    assignment.put("paidBy", paidBy);
+                    Timestamp paidAt = rs.getTimestamp("paid_at");
+                    assignment.put("paidAt", paidAt != null ? paidAt.getTime() : null);
+                    assignment.put("isPaid", paidBy != null);
+                    assignments.add(assignment);
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error getting all item assignments: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return assignments;
+    }
+
+    /**
+     * Mark all items assigned to a user as paid.
+     * Called when a user pays for their portion of a receipt.
+     * 
+     * @param receiptId The receipt ID
+     * @param userId The user ID who is paying
+     * @return Number of item assignments marked as paid
+     */
+    public int markItemsAsPaid(int receiptId, String userId) {
+        String sql = "UPDATE item_assignments " +
+                     "SET paid_by = ?, paid_at = CURRENT_TIMESTAMP " +
+                     "WHERE receipt_id = ? AND user_id = ? AND paid_by IS NULL";
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setString(1, userId);
+            pstmt.setInt(2, receiptId);
+            pstmt.setString(3, userId);
+            
+            int affectedRows = pstmt.executeUpdate();
+            return affectedRows;
+        } catch (SQLException e) {
+            System.err.println("Error marking items as paid: " + e.getMessage());
+            e.printStackTrace();
+            return 0;
+        }
+    }
+
+    /**
+     * Check if an item is already paid for by any user.
+     * 
+     * @param itemId The item ID
+     * @return true if the item (or any quantity of it) is paid, false otherwise
+     */
+    public boolean isItemPaid(int itemId) {
+        String sql = "SELECT COUNT(*) as count FROM item_assignments " +
+                     "WHERE item_id = ? AND paid_by IS NOT NULL";
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, itemId);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt("count") > 0;
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error checking if item is paid: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return false;
+    }
+
+    /**
+     * Get payment information for an item (who paid for it).
+     * 
+     * @param itemId The item ID
+     * @return Map with paidBy (user_id) and paidAt (timestamp), or null if not paid
+     */
+    public Map<String, Object> getItemPaymentInfo(int itemId) {
+        String sql = "SELECT paid_by, paid_at FROM item_assignments " +
+                     "WHERE item_id = ? AND paid_by IS NOT NULL " +
+                     "LIMIT 1";
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, itemId);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    Map<String, Object> paymentInfo = new HashMap<>();
+                    paymentInfo.put("paidBy", rs.getString("paid_by"));
+                    Timestamp paidAt = rs.getTimestamp("paid_at");
+                    paymentInfo.put("paidAt", paidAt != null ? paidAt.getTime() : null);
+                    return paymentInfo;
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error getting item payment info: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return null;
+    }
+
+    /**
      * Calculate the total amount owed by a user for a receipt based on their item assignments.
      * 
      * @param receiptId The receipt ID
@@ -275,6 +401,7 @@ public class ReceiptDAO {
     /**
      * Get all pending receipts for a specific user.
      * A receipt is pending for a user if they are a participant with status 'pending'.
+     * Excludes receipts that were uploaded by the user (they shouldn't see their own receipts as pending).
      * 
      * @param userId The user's ID (VARCHAR(36))
      * @return List of Receipt objects
@@ -282,7 +409,7 @@ public class ReceiptDAO {
     public List<Receipt> getPendingReceiptsForUser(String userId) {
         String sql = "SELECT r.* FROM receipts r " +
                      "INNER JOIN receipt_participants rp ON r.receipt_id = rp.receipt_id " +
-                     "WHERE rp.user_id = ? AND rp.status = 'pending' " +
+                     "WHERE rp.user_id = ? AND rp.status = 'pending' AND r.uploaded_by != ? " +
                      "ORDER BY r.created_at DESC";
         
         List<Receipt> receipts = new ArrayList<>();
@@ -291,6 +418,7 @@ public class ReceiptDAO {
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
             pstmt.setString(1, userId);
+            pstmt.setString(2, userId); // Also exclude receipts uploaded by this user
 
             try (ResultSet rs = pstmt.executeQuery()) {
                 while (rs.next()) {
@@ -628,5 +756,136 @@ public class ReceiptDAO {
         }
 
         return null;
+    }
+
+    /**
+     * Record a payment for a receipt participant.
+     * 
+     * @param receiptId The receipt ID
+     * @param userId The user ID who is paying
+     * @param amount The amount being paid
+     * @return true if payment was recorded successfully
+     */
+    public boolean recordPayment(int receiptId, String userId, float amount) {
+        String sql = "UPDATE receipt_participants " +
+                     "SET paid_amount = COALESCE(paid_amount, 0) + ?, paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP " +
+                     "WHERE receipt_id = ? AND user_id = ?";
+
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setBigDecimal(1, java.math.BigDecimal.valueOf(amount));
+            pstmt.setInt(2, receiptId);
+            pstmt.setString(3, userId);
+
+            int affectedRows = pstmt.executeUpdate();
+            return affectedRows > 0;
+
+        } catch (SQLException e) {
+            System.err.println("Error recording payment: " + e.getMessage());
+            e.printStackTrace();
+        }
+
+        return false;
+    }
+
+    /**
+     * Get the amount paid by a user for a receipt.
+     * 
+     * @param receiptId The receipt ID
+     * @param userId The user ID
+     * @return The amount paid, or 0 if no payment recorded
+     */
+    public float getPaidAmount(int receiptId, String userId) {
+        String sql = "SELECT COALESCE(paid_amount, 0) as paid_amount FROM receipt_participants " +
+                     "WHERE receipt_id = ? AND user_id = ?";
+
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setInt(1, receiptId);
+            pstmt.setString(2, userId);
+
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getBigDecimal("paid_amount").floatValue();
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error getting paid amount: " + e.getMessage());
+            e.printStackTrace();
+        }
+
+        return 0.0f;
+    }
+
+    /**
+     * Get all participants for a receipt with their payment status.
+     * 
+     * @param receiptId The receipt ID
+     * @return List of maps containing user_id, status, paid_amount, and owed_amount
+     */
+    public List<Map<String, Object>> getParticipantsWithPaymentStatus(int receiptId) {
+        String sql = "SELECT user_id, status, COALESCE(paid_amount, 0) as paid_amount " +
+                     "FROM receipt_participants WHERE receipt_id = ? AND status = 'accepted'";
+
+        List<Map<String, Object>> participants = new ArrayList<>();
+
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            pstmt.setInt(1, receiptId);
+
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, Object> participant = new HashMap<>();
+                    String userId = rs.getString("user_id");
+                    participant.put("user_id", userId);
+                    participant.put("status", rs.getString("status"));
+                    participant.put("paid_amount", rs.getBigDecimal("paid_amount").floatValue());
+                    participant.put("owed_amount", calculateUserOwedAmount(receiptId, userId));
+                    participants.add(participant);
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error getting participants with payment status: " + e.getMessage());
+            e.printStackTrace();
+        }
+
+        return participants;
+    }
+
+    /**
+     * Check if all participants have paid their full amount and mark receipt as completed if so.
+     * 
+     * @param receiptId The receipt ID
+     * @return true if receipt was marked as completed, false otherwise
+     */
+    public boolean checkAndMarkReceiptCompleted(int receiptId) {
+        List<Map<String, Object>> participants = getParticipantsWithPaymentStatus(receiptId);
+        
+        if (participants.isEmpty()) {
+            return false; // No accepted participants
+        }
+
+        // Check if all participants have paid their full amount
+        boolean allPaid = true;
+        for (Map<String, Object> participant : participants) {
+            float paidAmount = (Float) participant.get("paid_amount");
+            float owedAmount = (Float) participant.get("owed_amount");
+            
+            // Allow small rounding differences (0.01)
+            if (paidAmount < owedAmount - 0.01f) {
+                allPaid = false;
+                break;
+            }
+        }
+
+        if (allPaid) {
+            // Mark receipt as completed
+            return updateReceiptStatus(receiptId, "completed");
+        }
+
+        return false;
     }
 }

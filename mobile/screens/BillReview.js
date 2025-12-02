@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomNavBar from '../components/BottomNavBar';
 import { colors, spacing, typography } from '../styles/theme';
-import { createReceipt, claimItem, unclaimItem, getItemAssignments } from '../services/receiptsService';
+import { createReceipt, claimItem, unclaimItem, getItemAssignments, payReceipt, addParticipantsToReceipt } from '../services/receiptsService';
 
 export default function BillReview() {
   const navigation = useNavigation();
@@ -43,7 +43,10 @@ export default function BillReview() {
   const [isFromCamera, setIsFromCamera] = useState(false);
   const [isFromActivity, setIsFromActivity] = useState(false);
   const [receiptId, setReceiptId] = useState(null);
+  const [uploadedBy, setUploadedBy] = useState(null);
+  const [isUploader, setIsUploader] = useState(false);
   const [itemAssignments, setItemAssignments] = useState({}); // itemId -> quantity
+  const [itemPaymentInfo, setItemPaymentInfo] = useState({}); // itemId -> {paidBy, payerName, paidAt}
   const [owedAmount, setOwedAmount] = useState(0);
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
 
@@ -53,9 +56,14 @@ export default function BillReview() {
     const routeData = route.params?.data;
     const routeReceiptId = route.params?.receiptId;
     const routeIsFromActivity = route.params?.isFromActivity;
+    const routeUploadedBy = route.params?.uploadedBy;
     
     if (routeReceiptId) {
       setReceiptId(routeReceiptId);
+    }
+    
+    if (routeUploadedBy) {
+      setUploadedBy(routeUploadedBy);
     }
     
     if (routeIsFromActivity) {
@@ -106,6 +114,17 @@ export default function BillReview() {
     }
   }, [route.params]);
 
+  // Check if user is uploader and load item assignments if viewing from Activity
+  useEffect(() => {
+    const checkIfUploader = async () => {
+      if (uploadedBy) {
+        const userId = await AsyncStorage.getItem('userId');
+        setIsUploader(userId === uploadedBy);
+      }
+    };
+    checkIfUploader();
+  }, [uploadedBy]);
+
   // Load item assignments if viewing from Activity
   useEffect(() => {
     console.log('BillReview useEffect - isFromActivity:', isFromActivity, 'receiptId:', receiptId);
@@ -124,6 +143,7 @@ export default function BillReview() {
       if (response.success) {
         setItemAssignments(response.assignments || {});
         setOwedAmount(response.owedAmount || 0);
+        setItemPaymentInfo(response.itemPaymentInfo || {}); // Store payment info for all items
       }
     } catch (error) {
       console.error('Error loading item assignments:', error);
@@ -155,6 +175,8 @@ export default function BillReview() {
         }
         setItemAssignments(newAssignments);
         setOwedAmount(response.owedAmount || 0);
+        // Reload payment info to get latest status
+        loadItemAssignments();
       } else {
         Alert.alert('Error', response.message || 'Failed to update item claim');
       }
@@ -162,6 +184,46 @@ export default function BillReview() {
       console.error('Error toggling item claim:', error);
       Alert.alert('Error', 'Failed to update item claim');
     }
+  };
+
+  const handlePay = async () => {
+    if (!receiptId) return;
+    
+    Alert.alert(
+      'Confirm Payment',
+      `Pay $${owedAmount.toFixed(2)} for your portion of this receipt?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Pay',
+          onPress: async () => {
+            try {
+              const response = await payReceipt(receiptId);
+              
+              if (response.success) {
+                // Update local state
+                setOwedAmount(response.owedAmount || 0);
+                
+                // Reload item assignments to get updated payment status (including paid items)
+                await loadItemAssignments();
+                
+                // Show success message
+                const message = response.receiptCompleted
+                  ? `Payment successful! Receipt is now completed.`
+                  : `Payment successful! $${response.amountPaid?.toFixed(2)} paid.`;
+                
+                Alert.alert('Success', message);
+              } else {
+                Alert.alert('Payment Failed', response.message || 'Failed to process payment');
+              }
+            } catch (error) {
+              console.error('Error processing payment:', error);
+              Alert.alert('Error', 'Failed to process payment. Please try again.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   // Transform backend receipt data to match our expected format
@@ -209,43 +271,61 @@ export default function BillReview() {
     setIsCreating(true);
     
     try {
-      // Prepare receipt data for API
-      const receiptData = {
-        restaurant_name: billData.restaurant_name,
-        total_amount: billData.total,
-        tax: billData.tax,
-        tip: billData.tip,
-        items: billData.items.map((item) => ({
-          name: item.name,
-          price: item.price,
-          qty: item.qty || 1,
-        })),
-        participants: friendsEmails.split(',').map(email => email.trim()).filter(email => email),
-      };
-      
-      // Call API to create receipt
-      console.log('Creating receipt with data:', JSON.stringify(receiptData, null, 2));
-      const response = await createReceipt(receiptData);
-      console.log('Receipt creation response:', response);
-      
-      if (response.success) {
-        const participantsCount = response.participantsAdded || 0;
-        const message = participantsCount > 0
-          ? `Bill created successfully! Shared with ${participantsCount} friend${participantsCount > 1 ? 's' : ''}.`
-          : 'Bill created successfully! (Note: Some friends may not have accounts yet)';
+      // If viewing from Activity and user is uploader, add participants to existing receipt
+      if (isFromActivity && receiptId && isUploader) {
+        const participantEmails = friendsEmails.split(',').map(email => email.trim()).filter(email => email);
+        const response = await addParticipantsToReceipt(receiptId, participantEmails);
         
-        Alert.alert('Success', message, [
-          {
-            text: 'OK',
-            onPress: () => navigation.navigate('Home'),
-          },
-        ]);
+        if (response.success) {
+          const participantsCount = response.participantsAdded || 0;
+          const message = participantsCount > 0
+            ? `Added ${participantsCount} friend${participantsCount > 1 ? 's' : ''} to this receipt!`
+            : 'No new friends were added. (They may not have accounts yet)';
+          
+          Alert.alert('Success', message);
+          setFriendsEmails(''); // Clear input
+        } else {
+          Alert.alert('Error', response.message || 'Failed to add friends. Please try again.');
+        }
       } else {
-        Alert.alert('Error', response.message || 'Failed to create bill. Please try again.');
+        // Create new receipt
+        const receiptData = {
+          restaurant_name: billData.restaurant_name,
+          total_amount: billData.total,
+          tax: billData.tax,
+          tip: billData.tip,
+          items: billData.items.map((item) => ({
+            name: item.name,
+            price: item.price,
+            qty: item.qty || 1,
+          })),
+          participants: friendsEmails.split(',').map(email => email.trim()).filter(email => email),
+        };
+        
+        // Call API to create receipt
+        console.log('Creating receipt with data:', JSON.stringify(receiptData, null, 2));
+        const response = await createReceipt(receiptData);
+        console.log('Receipt creation response:', response);
+        
+        if (response.success) {
+          const participantsCount = response.participantsAdded || 0;
+          const message = participantsCount > 0
+            ? `Bill created successfully! Shared with ${participantsCount} friend${participantsCount > 1 ? 's' : ''}.`
+            : 'Bill created successfully! (Note: Some friends may not have accounts yet)';
+          
+          Alert.alert('Success', message, [
+            {
+              text: 'OK',
+              onPress: () => navigation.navigate('Home'),
+            },
+          ]);
+        } else {
+          Alert.alert('Error', response.message || 'Failed to create bill. Please try again.');
+        }
       }
     } catch (error) {
-      console.error("Error creating bill:", error);
-      Alert.alert('Error', 'Failed to create bill. Please try again.');
+      console.error("Error creating/updating bill:", error);
+      Alert.alert('Error', 'Failed to process request. Please try again.');
     }
     
     setIsCreating(false);
@@ -310,24 +390,31 @@ export default function BillReview() {
               billData.items.map((item, index) => {
                 const itemId = item.itemId || item.id;
                 const isClaimed = itemId && itemAssignments[itemId] && itemAssignments[itemId] > 0;
+                const paymentInfo = itemPaymentInfo[itemId];
+                const isPaid = paymentInfo != null;
+                const payerName = paymentInfo?.payerName || null;
                 
                 // Debug logging
                 if (isFromActivity && index === 0) {
-                  console.log('BillReview: First item - itemId:', itemId, 'isFromActivity:', isFromActivity, 'itemAssignments:', itemAssignments);
+                  console.log('BillReview: First item - itemId:', itemId, 'isFromActivity:', isFromActivity, 'itemAssignments:', itemAssignments, 'isPaid:', isPaid);
                 }
                 
                 return (
                   <View key={itemId || index}>
                     <TouchableOpacity
-                      style={[styles.itemRow, isFromActivity && styles.itemRowClickable]}
-                      onPress={isFromActivity ? () => handleToggleItemClaim(itemId) : undefined}
-                      disabled={!isFromActivity}
-                      activeOpacity={isFromActivity ? 0.7 : 1}
+                      style={[
+                        styles.itemRow, 
+                        isFromActivity && !isPaid && styles.itemRowClickable,
+                        isPaid && styles.itemRowPaid
+                      ]}
+                      onPress={isFromActivity && !isPaid ? () => handleToggleItemClaim(itemId) : undefined}
+                      disabled={!isFromActivity || isPaid}
+                      activeOpacity={isFromActivity && !isPaid ? 0.7 : 1}
                     >
                       <View style={styles.itemInfo}>
                         <View style={styles.itemNameRow}>
-                          <Text style={styles.itemName}>{item.name}</Text>
-                          {isFromActivity && (
+                          <Text style={[styles.itemName, isPaid && styles.itemNamePaid]}>{item.name}</Text>
+                          {isFromActivity && !isPaid && (
                             <View style={[styles.claimBadge, isClaimed && styles.claimBadgeActive]}>
                               <Ionicons 
                                 name={isClaimed ? "checkmark-circle" : "ellipse-outline"} 
@@ -339,12 +426,20 @@ export default function BillReview() {
                               </Text>
                             </View>
                           )}
+                          {isPaid && (
+                            <View style={styles.paidBadge}>
+                              <Ionicons name="checkmark-circle" size={16} color="#059669" />
+                              <Text style={styles.paidBadgeText}>Paid by {payerName || 'Someone'}</Text>
+                            </View>
+                          )}
                         </View>
                         {item.qty > 1 && (
-                          <Text style={styles.itemQty}>Qty: {item.qty}</Text>
+                          <Text style={[styles.itemQty, isPaid && styles.itemQtyPaid]}>Qty: {item.qty}</Text>
                         )}
                       </View>
-                      <Text style={styles.itemPrice}>${(item.price * (item.qty || 1)).toFixed(2)}</Text>
+                      <Text style={[styles.itemPrice, isPaid && styles.itemPricePaid]}>
+                        ${(item.price * (item.qty || 1)).toFixed(2)}
+                      </Text>
                     </TouchableOpacity>
                     {index < billData.items.length - 1 && <View style={styles.separator} />}
                   </View>
@@ -369,7 +464,7 @@ export default function BillReview() {
                 <Text style={styles.hintText}>Tap items above to claim them and calculate your portion</Text>
               )}
               {owedAmount > 0 && (
-                <TouchableOpacity style={styles.payButton}>
+                <TouchableOpacity style={styles.payButton} onPress={handlePay}>
                   <Ionicons name="card-outline" size={20} color="#fff" style={styles.buttonIcon} />
                   <Text style={styles.payButtonText}>Pay ${owedAmount.toFixed(2)}</Text>
                 </TouchableOpacity>
@@ -571,15 +666,24 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.text,
   },
+  itemNamePaid: {
+    color: '#059669',
+  },
   itemQty: {
     fontSize: typography.sizes.sm,
     color: colors.textLight,
     marginTop: spacing.xs,
   },
+  itemQtyPaid: {
+    color: '#059669',
+  },
   itemPrice: {
     fontSize: typography.sizes.md,
     fontWeight: '600',
     color: colors.text,
+  },
+  itemPricePaid: {
+    color: '#059669',
   },
   separator: {
     height: 1,
@@ -676,11 +780,32 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginVertical: 2,
   },
+  itemRowPaid: {
+    backgroundColor: '#D1FAE5',
+    borderRadius: 8,
+    marginVertical: 2,
+    opacity: 0.8,
+  },
   itemNameRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: spacing.xs,
+  },
+  paidBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: 12,
+    marginLeft: spacing.xs,
+  },
+  paidBadgeText: {
+    fontSize: typography.sizes.xs,
+    color: '#059669',
+    fontWeight: '600',
+    marginLeft: 4,
   },
   claimBadge: {
     flexDirection: 'row',

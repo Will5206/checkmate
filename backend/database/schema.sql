@@ -145,6 +145,8 @@ CREATE TABLE IF NOT EXISTS receipt_participants (
     receipt_id INT NOT NULL,
     user_id VARCHAR(36) NOT NULL,
     status ENUM('pending', 'accepted', 'declined') DEFAULT 'pending',
+    paid_amount DECIMAL(10, 2) DEFAULT 0.00,
+    paid_at TIMESTAMP NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (receipt_id) REFERENCES receipts(receipt_id) ON DELETE CASCADE,
@@ -165,10 +167,13 @@ CREATE TABLE IF NOT EXISTS item_assignments (
     item_id INT NOT NULL,
     user_id VARCHAR(36) NOT NULL,
     quantity INT DEFAULT 1,
+    paid_by VARCHAR(36) NULL,
+    paid_at TIMESTAMP NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (receipt_id) REFERENCES receipts(receipt_id) ON DELETE CASCADE,
     FOREIGN KEY (item_id) REFERENCES receipt_items(item_id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (paid_by) REFERENCES users(user_id) ON DELETE SET NULL,
     UNIQUE KEY unique_item_user (item_id, user_id)
 );
 CREATE INDEX idx_item_assignments_receipt_id ON item_assignments(receipt_id);

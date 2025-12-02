@@ -59,7 +59,11 @@ public class Server {
             server.createContext("/api/receipts/activity", new ReceiptController.GetActivityReceiptsHandler());
             server.createContext("/api/receipts/items/claim", new ReceiptController.ClaimItemHandler());
             server.createContext("/api/receipts/items/assignments", new ReceiptController.GetItemAssignmentsHandler());
+            server.createContext("/api/receipts/pay", new ReceiptController.PayReceiptHandler());
+            server.createContext("/api/receipts/add-participants", new ReceiptController.AddParticipantsHandler());
             server.createContext("/api/balance", new BalanceController.GetBalanceHandler());
+            server.createContext("/api/balance/add", new BalanceController.AddMoneyHandler());
+            server.createContext("/api/balance/cashout", new BalanceController.CashOutHandler());
 
             //start server
             server.setExecutor(null);

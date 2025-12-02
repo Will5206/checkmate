@@ -49,6 +49,32 @@ export default function PendingScreen() {
     setRefreshing(false);
   };
 
+  const handleReview = (receipt) => {
+    // Transform receipt data to match BillReview format
+    const billData = {
+      merchant: receipt.merchantName || 'Unknown Merchant',
+      total: receipt.totalAmount || 0,
+      subtotal: (receipt.totalAmount || 0) - (receipt.taxAmount || 0) - (receipt.tipAmount || 0),
+      tax: receipt.taxAmount || 0,
+      tip: receipt.tipAmount || 0,
+      items: (receipt.items || []).map(item => ({
+        itemId: item.itemId,
+        id: item.itemId,
+        name: item.name,
+        qty: item.quantity || item.qty || 1,
+        price: item.price || 0,
+      })),
+      date: receipt.date ? new Date(receipt.date).toLocaleString() : 'Unknown date',
+    };
+    
+    // Navigate to BillReview screen with receipt data
+    navigation.navigate('BillReview', { 
+      data: billData,
+      receiptId: receipt.receiptId,
+      isFromActivity: true, // Enable item claiming
+    });
+  };
+
   const handleAccept = async (receiptId) => {
     setProcessingIds(prev => new Set(prev).add(receiptId));
     
@@ -176,6 +202,15 @@ export default function PendingScreen() {
         )}
 
         <View style={styles.actionButtons}>
+          <TouchableOpacity
+            style={[styles.reviewButton, isProcessing && styles.buttonDisabled]}
+            onPress={() => handleReview(receipt)}
+            disabled={isProcessing}
+          >
+            <Ionicons name="eye-outline" size={18} color="#059669" />
+            <Text style={styles.reviewButtonText}>Review</Text>
+          </TouchableOpacity>
+          
           <TouchableOpacity
             style={[styles.declineButton, isProcessing && styles.buttonDisabled]}
             onPress={() => handleDecline(receipt.receiptId)}
@@ -418,6 +453,22 @@ const styles = StyleSheet.create({
   actionButtons: {
     flexDirection: 'row',
     gap: 12,
+  },
+  reviewButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#D1FAE5',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    gap: 6,
+  },
+  reviewButtonText: {
+    color: '#059669',
+    fontSize: 14,
+    fontWeight: '600',
   },
   declineButton: {
     flex: 1,
