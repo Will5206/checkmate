@@ -54,6 +54,9 @@ public class Receipt {
 
     // Methods from UML
     public void addItem(ReceiptItem item) {
+        if (item == null) {
+            throw new IllegalArgumentException("ReceiptItem cannot be null");
+        }
         items.add(item);
         System.out.println("Item added: " + item.getName());
     }
