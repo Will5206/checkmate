@@ -1337,8 +1337,21 @@ public class ReceiptController {
                 
                 System.out.println("[ReceiptController] Successfully recorded payment and marked " + itemsMarkedPaid + " items as paid");
                 
-                // Check if receipt should be marked as completed
-                boolean isCompleted = receiptDAO.checkAndMarkReceiptCompleted(receiptId);
+                // OPTIMIZATION: Get sender's updated balance immediately (balance was already updated synchronously)
+                double senderBalance = balanceService.getCurrentBalance(uploaderId);
+                
+                // OPTIMIZATION: Check if receipt should be marked as completed ASYNCHRONOUSLY
+                // This prevents blocking the response - balance is already updated, so we can respond immediately
+                final int finalReceiptId = receiptId;
+                new Thread(() -> {
+                    try {
+                        receiptDAO.checkAndMarkReceiptCompleted(finalReceiptId);
+                        System.out.println("[ReceiptController] Background: Checked receipt completion status for receipt " + finalReceiptId);
+                    } catch (Exception e) {
+                        System.err.println("[ReceiptController] Error in background receipt completion check: " + e.getMessage());
+                        e.printStackTrace();
+                    }
+                }).start();
                 
                 // Optimized: Calculate new amounts (we know paidAmount = old paidAmount + remainingAmount)
                 float newPaidAmount = paidAmount + remainingAmount;
@@ -1380,7 +1393,7 @@ public class ReceiptController {
                     .put("paidAmount", newPaidAmount)
                     .put("owedAmount", newOwedAmount)
                     .put("owedAmountExcludingPaid", newOwedAmountExcludingPaid)
-                    .put("receiptCompleted", isCompleted)
+                    .put("senderBalance", senderBalance) // Include sender's updated balance for immediate UI update
                     .put("itemPaymentInfo", itemPaymentInfo); // Include payment info to avoid reload
                 
                 sendJson(exchange, 200, resp);
