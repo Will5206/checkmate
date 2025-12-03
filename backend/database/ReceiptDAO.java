@@ -1759,4 +1759,181 @@ public class ReceiptDAO {
 
         return false;
     }
+    
+    /**
+     * OPTIMIZATION: Batch fetch metadata for multiple receipts in a single query.
+     * This replaces N separate queries (getParticipantStatus, getPaidAmount, isReceiptComplete, etc.)
+     * with a single JOIN query.
+     * 
+     * @param receiptIds List of receipt IDs to fetch metadata for
+     * @param userId The user ID to get participant-specific data
+     * @return Map of receiptId -> ReceiptMetadata containing all metadata
+     */
+    public Map<Integer, ReceiptMetadata> getReceiptsMetadataBatch(List<Integer> receiptIds, String userId) {
+        if (receiptIds == null || receiptIds.isEmpty()) {
+            return new HashMap<>();
+        }
+        
+        // Build IN clause with placeholders
+        StringBuilder placeholders = new StringBuilder();
+        for (int i = 0; i < receiptIds.size(); i++) {
+            if (i > 0) placeholders.append(",");
+            placeholders.append("?");
+        }
+        
+        // Single query to get all metadata: uploaded_by, participant status, paid amount, complete status
+        String sql = "SELECT " +
+                     "  r.receipt_id, " +
+                     "  r.uploaded_by, " +
+                     "  r.complete as is_complete, " +
+                     "  COALESCE(rp.status, NULL) as participant_status, " +
+                     "  COALESCE(rp.paid_amount, 0) as paid_amount " +
+                     "FROM receipts r " +
+                     "LEFT JOIN receipt_participants rp ON r.receipt_id = rp.receipt_id AND rp.user_id = ? " +
+                     "WHERE r.receipt_id IN (" + placeholders.toString() + ")";
+        
+        Map<Integer, ReceiptMetadata> metadataMap = new HashMap<>();
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            // Set userId parameter (for LEFT JOIN)
+            pstmt.setString(1, userId);
+            
+            // Set receipt ID parameters
+            for (int i = 0; i < receiptIds.size(); i++) {
+                pstmt.setInt(i + 2, receiptIds.get(i));
+            }
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    int receiptId = rs.getInt("receipt_id");
+                    String uploadedBy = rs.getString("uploaded_by");
+                    boolean isComplete = rs.getBoolean("is_complete");
+                    String participantStatus = rs.getString("participant_status");
+                    float paidAmount = rs.getBigDecimal("paid_amount").floatValue();
+                    
+                    ReceiptMetadata metadata = new ReceiptMetadata();
+                    metadata.uploadedBy = uploadedBy;
+                    metadata.isComplete = isComplete;
+                    metadata.participantStatus = participantStatus;
+                    metadata.paidAmount = paidAmount;
+                    
+                    metadataMap.put(receiptId, metadata);
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[ReceiptDAO] Error batch fetching receipts metadata: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return metadataMap;
+    }
+    
+    /**
+     * OPTIMIZATION: Batch calculate owed amounts for multiple receipts in a single query.
+     * This replaces N separate calculateUserOwedAmount() calls with a single query.
+     * 
+     * @param receiptIds List of receipt IDs to calculate owed amounts for
+     * @param userId The user ID
+     * @return Map of receiptId -> owedAmount
+     */
+    public Map<Integer, Float> calculateUserOwedAmountsBatch(List<Integer> receiptIds, String userId) {
+        if (receiptIds == null || receiptIds.isEmpty()) {
+            return new HashMap<>();
+        }
+        
+        // Build IN clause with placeholders
+        StringBuilder placeholders = new StringBuilder();
+        for (int i = 0; i < receiptIds.size(); i++) {
+            if (i > 0) placeholders.append(",");
+            placeholders.append("?");
+        }
+        
+        // Single query to calculate owed amounts for all receipts
+        String sql = "SELECT " +
+                     "  r.receipt_id, " +
+                     "  COALESCE(SUM(ri.price * ia.quantity), 0) as assigned_subtotal, " +
+                     "  COALESCE(SUM(ri.price * ri.quantity), 0) as total_subtotal, " +
+                     "  r.tax_amount, " +
+                     "  r.tip_amount " +
+                     "FROM receipts r " +
+                     "LEFT JOIN receipt_items ri ON r.receipt_id = ri.receipt_id " +
+                     "LEFT JOIN item_assignments ia ON ri.item_id = ia.item_id AND ia.user_id = ? " +
+                     "WHERE r.receipt_id IN (" + placeholders.toString() + ") " +
+                     "GROUP BY r.receipt_id, r.tax_amount, r.tip_amount";
+        
+        Map<Integer, Float> owedAmounts = new HashMap<>();
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            // Set userId parameter (for LEFT JOIN)
+            pstmt.setString(1, userId);
+            
+            // Set receipt ID parameters
+            for (int i = 0; i < receiptIds.size(); i++) {
+                pstmt.setInt(i + 2, receiptIds.get(i));
+            }
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    int receiptId = rs.getInt("receipt_id");
+                    java.math.BigDecimal assignedSubtotal = rs.getBigDecimal("assigned_subtotal");
+                    java.math.BigDecimal totalSubtotal = rs.getBigDecimal("total_subtotal");
+                    java.math.BigDecimal taxAmount = rs.getBigDecimal("tax_amount");
+                    java.math.BigDecimal tipAmount = rs.getBigDecimal("tip_amount");
+                    
+                    if (assignedSubtotal == null || assignedSubtotal.compareTo(java.math.BigDecimal.ZERO) == 0) {
+                        owedAmounts.put(receiptId, 0.0f);
+                        continue;
+                    }
+                    
+                    if (totalSubtotal == null || totalSubtotal.compareTo(java.math.BigDecimal.ZERO) == 0) {
+                        owedAmounts.put(receiptId, 0.0f);
+                        continue;
+                    }
+                    
+                    // Calculate proportion using BigDecimal for precision
+                    java.math.BigDecimal proportion = assignedSubtotal.divide(
+                        totalSubtotal, 
+                        10, // 10 decimal places for intermediate calculation
+                        java.math.RoundingMode.HALF_UP
+                    );
+                    
+                    // Calculate proportional tax and tip
+                    java.math.BigDecimal assignedTax = (taxAmount != null ? taxAmount : java.math.BigDecimal.ZERO)
+                        .multiply(proportion)
+                        .setScale(2, java.math.RoundingMode.HALF_UP);
+                    
+                    java.math.BigDecimal assignedTip = (tipAmount != null ? tipAmount : java.math.BigDecimal.ZERO)
+                        .multiply(proportion)
+                        .setScale(2, java.math.RoundingMode.HALF_UP);
+                    
+                    // Calculate total and round to 2 decimal places
+                    java.math.BigDecimal total = assignedSubtotal
+                        .add(assignedTax)
+                        .add(assignedTip)
+                        .setScale(2, java.math.RoundingMode.HALF_UP);
+                    
+                    owedAmounts.put(receiptId, total.floatValue());
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[ReceiptDAO] Error batch calculating owed amounts: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return owedAmounts;
+    }
+    
+    /**
+     * Inner class to hold receipt metadata for batch operations
+     */
+    public static class ReceiptMetadata {
+        public String uploadedBy;
+        public boolean isComplete;
+        public String participantStatus;
+        public float paidAmount;
+    }
 }

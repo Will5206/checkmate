@@ -3,7 +3,7 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
+  FlatList,
   TouchableOpacity,
   ActivityIndicator,
   Alert,
@@ -366,12 +366,7 @@ export default function PendingScreen() {
             <Text style={styles.loadingText}>Loading receipts...</Text>
           </View>
         ) : receipts.length === 0 ? (
-          <ScrollView
-            contentContainerStyle={styles.emptyContainer}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-            }
-          >
+          <View style={styles.emptyContainer}>
             <Ionicons name="receipt-outline" size={64} color="#D1D5DB" />
             <Text style={styles.emptyText}>No pending receipts</Text>
             <Text style={styles.emptySubtext}>
@@ -383,19 +378,21 @@ export default function PendingScreen() {
             >
               <Text style={styles.refreshButtonText}>Refresh</Text>
             </TouchableOpacity>
-          </ScrollView>
+          </View>
         ) : (
-          <ScrollView
-            style={styles.scrollView}
+          <FlatList
+            data={receipts}
+            renderItem={({ item }) => <PendingReceiptCard receipt={item} />}
+            keyExtractor={(item) => item.receiptId.toString()}
             contentContainerStyle={styles.scrollContent}
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
             }
-          >
-            {receipts.map((receipt) => (
-              <PendingReceiptCard key={receipt.receiptId} receipt={receipt} />
-            ))}
-          </ScrollView>
+            initialNumToRender={10}
+            maxToRenderPerBatch={5}
+            windowSize={10}
+            removeClippedSubviews={true}
+          />
         )}
       </View>
       <BottomNavBar />

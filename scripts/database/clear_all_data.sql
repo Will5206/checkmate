@@ -1,17 +1,20 @@
--- Clear all test data from CheckMate database (KEEPING USER ACCOUNTS)
--- This script deletes all receipts, transactions, and related data but keeps all user accounts
+-- Clear all data from CheckMate database (KEEPING ONLY USER ACCOUNTS)
+-- This script deletes all receipts, transactions, sessions, friendships, and related data
+-- but keeps all user accounts
 
 -- Disable foreign key checks temporarily for faster deletion
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- Delete in order from most dependent to least dependent
--- NOTE: We are NOT deleting from users, sessions, or friendships tables
+-- NOTE: We are ONLY keeping the users table
 DELETE FROM item_assignments;
 DELETE FROM receipt_participants;
 DELETE FROM receipt_items;
 DELETE FROM receipts;
 DELETE FROM transactions;
 DELETE FROM balance_history;
+DELETE FROM sessions;
+DELETE FROM friendships;
 
 -- Reset AUTO_INCREMENT counters
 ALTER TABLE item_assignments AUTO_INCREMENT = 1;
@@ -21,13 +24,13 @@ ALTER TABLE receipts AUTO_INCREMENT = 1;
 ALTER TABLE transactions AUTO_INCREMENT = 1;
 ALTER TABLE balance_history AUTO_INCREMENT = 1;
 
--- Reset user balances to 0.00 (optional - remove this line if you want to keep balances)
+-- Reset user balances to 0.00
 UPDATE users SET balance = 0.00;
 
 -- Re-enable foreign key checks
 SET FOREIGN_KEY_CHECKS = 1;
 
--- Verify deletion (users, sessions, and friendships should still have data)
+-- Verify deletion (only users should still have data)
 SELECT 'item_assignments' AS table_name, COUNT(*) AS count FROM item_assignments
 UNION ALL
 SELECT 'receipt_participants', COUNT(*) FROM receipt_participants

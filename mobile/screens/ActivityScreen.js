@@ -3,7 +3,7 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
+  FlatList,
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
@@ -240,22 +240,19 @@ export default function ActivityScreen() {
             </Text>
           </View>
         ) : (
-          <ScrollView 
-            style={styles.scrollView} 
+          <FlatList
+            data={receipts}
+            renderItem={({ item }) => <ReceiptCard receipt={item} />}
+            keyExtractor={(item) => item.receiptId.toString()}
             contentContainerStyle={styles.scrollContent}
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
             }
-          >
-            {(() => {
-              console.log('[ActivityScreen] STEP 9: Rendering receipts, count:', receipts.length);
-              console.log('[ActivityScreen] STEP 10: Receipt IDs to render:', receipts.map(r => r.receiptId));
-              return receipts.map((receipt, index) => {
-                console.log(`[ActivityScreen] STEP 11: Rendering receipt ${index + 1}/${receipts.length}, ID: ${receipt.receiptId}, merchant: ${receipt.merchantName}`);
-                return <ReceiptCard key={receipt.receiptId} receipt={receipt} />;
-              });
-            })()}
-          </ScrollView>
+            initialNumToRender={10}
+            maxToRenderPerBatch={5}
+            windowSize={10}
+            removeClippedSubviews={true}
+          />
         )}
       </View>
       <BottomNavBar />

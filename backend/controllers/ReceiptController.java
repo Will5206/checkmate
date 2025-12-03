@@ -424,33 +424,62 @@ public class ReceiptController {
                 System.out.println("[ReceiptController] ListPendingReceiptsHandler - Found " + pendingReceipts.size() + " pending receipts for user " + userIdStr);
                 
                 ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
+                
+                // OPTIMIZATION: Batch fetch all metadata in a single query instead of N queries
+                List<Integer> receiptIds = new ArrayList<>();
+                for (Receipt receipt : pendingReceipts) {
+                    receiptIds.add(receipt.getReceiptId());
+                }
+                Map<Integer, ReceiptDAO.ReceiptMetadata> metadataMap = receiptDAO.getReceiptsMetadataBatch(receiptIds, userIdStr);
+                System.out.println("[ReceiptController] ListPendingReceiptsHandler - Batch fetched metadata for " + metadataMap.size() + " receipts");
+                
                 JSONArray receiptsArray = new JSONArray();
                 for (Receipt receipt : pendingReceipts) {
-                    JSONObject receiptJson = buildReceiptJson(receipt);
-                    // Get status using String userId
-                    String status = receiptDAO.getParticipantStatus(
-                        receipt.getReceiptId(), userIdStr);
-                    receiptJson.put("status", status != null ? status : "pending");
+                    // Get metadata from batch result
+                    ReceiptDAO.ReceiptMetadata metadata = metadataMap.get(receipt.getReceiptId());
                     
-                    // Check if user is uploader
-                    String uploadedBy = receiptDAO.getReceiptUploadedBy(receipt.getReceiptId());
-                    boolean isUploader = uploadedBy != null && uploadedBy.equals(userIdStr);
-                    receiptJson.put("isUploader", isUploader);
-                    
-                    // Get participant payment info (if not uploader)
-                    if (!isUploader && status != null && !status.equals("declined")) {
-                        float paidAmount = receiptDAO.getPaidAmount(receipt.getReceiptId(), userIdStr);
-                        receiptJson.put("hasPaid", paidAmount > 0.01f);
-                        receiptJson.put("paidAmount", paidAmount);
+                    // Build JSON with uploadedBy from metadata to avoid extra query
+                    JSONObject receiptJson = buildReceiptJson(receipt, metadata != null ? metadata.uploadedBy : null);
+                    if (metadata != null) {
+                        String status = metadata.participantStatus != null ? metadata.participantStatus : "pending";
+                        receiptJson.put("status", status);
+                        
+                        // Check if user is uploader
+                        boolean isUploader = metadata.uploadedBy != null && metadata.uploadedBy.equals(userIdStr);
+                        receiptJson.put("isUploader", isUploader);
+                        
+                        // Get participant payment info (if not uploader)
+                        if (!isUploader && status != null && !status.equals("declined")) {
+                            receiptJson.put("hasPaid", metadata.paidAmount > 0.01f);
+                            receiptJson.put("paidAmount", metadata.paidAmount);
+                        } else {
+                            receiptJson.put("hasPaid", false);
+                            receiptJson.put("paidAmount", 0.0f);
+                        }
+                        
+                        // CRITICAL FIX: Get complete status from batch result
+                        receiptJson.put("complete", metadata.isComplete);
                     } else {
-                        receiptJson.put("hasPaid", false);
-                        receiptJson.put("paidAmount", 0.0f);
+                        // Fallback to individual queries if batch fetch failed (backward compatibility)
+                        String status = receiptDAO.getParticipantStatus(receipt.getReceiptId(), userIdStr);
+                        receiptJson.put("status", status != null ? status : "pending");
+                        
+                        String uploadedBy = receiptDAO.getReceiptUploadedBy(receipt.getReceiptId());
+                        boolean isUploader = uploadedBy != null && uploadedBy.equals(userIdStr);
+                        receiptJson.put("isUploader", isUploader);
+                        
+                        if (!isUploader && status != null && !status.equals("declined")) {
+                            float paidAmount = receiptDAO.getPaidAmount(receipt.getReceiptId(), userIdStr);
+                            receiptJson.put("hasPaid", paidAmount > 0.01f);
+                            receiptJson.put("paidAmount", paidAmount);
+                        } else {
+                            receiptJson.put("hasPaid", false);
+                            receiptJson.put("paidAmount", 0.0f);
+                        }
+                        
+                        boolean isComplete = receiptDAO.isReceiptComplete(receipt.getReceiptId());
+                        receiptJson.put("complete", isComplete);
                     }
-                    
-                    // CRITICAL FIX: Get complete status from database and include in response
-                    // Frontend will filter out receipts with complete = true
-                    boolean isComplete = receiptDAO.isReceiptComplete(receipt.getReceiptId());
-                    receiptJson.put("complete", isComplete);
                     
                     receiptsArray.put(receiptJson);
                 }
@@ -768,39 +797,65 @@ public class ReceiptController {
                 
                 ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
                 
-                System.out.println("[ReceiptController] STEP B6: Building JSON array for " + receipts.size() + " receipts");
+                // OPTIMIZATION: Batch fetch all metadata and owed amounts in single queries
+                List<Integer> receiptIds = new ArrayList<>();
+                for (Receipt receipt : receipts) {
+                    receiptIds.add(receipt.getReceiptId());
+                }
+                Map<Integer, ReceiptDAO.ReceiptMetadata> metadataMap = receiptDAO.getReceiptsMetadataBatch(receiptIds, userIdStr);
+                Map<Integer, Float> owedAmountsMap = receiptDAO.calculateUserOwedAmountsBatch(receiptIds, userIdStr);
+                System.out.println("[ReceiptController] STEP B6: Batch fetched metadata and owed amounts for " + metadataMap.size() + " receipts");
+                
+                System.out.println("[ReceiptController] STEP B7: Building JSON array for " + receipts.size() + " receipts");
                 JSONArray receiptsArray = new JSONArray();
                 for (int i = 0; i < receipts.size(); i++) {
                     Receipt receipt = receipts.get(i);
-                    System.out.println("[ReceiptController] STEP B7: Processing receipt " + (i+1) + "/" + receipts.size() + " (ID: " + receipt.getReceiptId() + ")");
+                    System.out.println("[ReceiptController] STEP B8: Processing receipt " + (i+1) + "/" + receipts.size() + " (ID: " + receipt.getReceiptId() + ")");
                     
-                    JSONObject receiptJson = buildReceiptJson(receipt);
-                    System.out.println("[ReceiptController] STEP B8: Built JSON for receipt " + receipt.getReceiptId());
+                    // Get metadata and owed amount from batch results
+                    ReceiptDAO.ReceiptMetadata metadata = metadataMap.get(receipt.getReceiptId());
                     
-                    // Add payment status for this user
-                    float owedAmount = receiptDAO.calculateUserOwedAmount(receipt.getReceiptId(), userIdStr);
-                    float paidAmount = receiptDAO.getPaidAmount(receipt.getReceiptId(), userIdStr);
+                    // Build JSON with uploadedBy from metadata to avoid extra query
+                    JSONObject receiptJson = buildReceiptJson(receipt, metadata != null ? metadata.uploadedBy : null);
+                    System.out.println("[ReceiptController] STEP B9: Built JSON for receipt " + receipt.getReceiptId());
+                    Float owedAmount = owedAmountsMap.get(receipt.getReceiptId());
                     
-                    // Only mark as paid if:
-                    // 1. User has items claimed (owedAmount > 0.01) AND has paid for them
-                    // 2. OR user has no items claimed (owedAmount <= 0.01) but has made a payment (paidAmount > 0.01)
-                    // This prevents false positives when user hasn't claimed anything yet
-                    boolean hasPaid = false;
-                    if (owedAmount > 0.01f) {
-                        // User has items claimed - check if they've paid for them
-                        hasPaid = paidAmount >= owedAmount - 0.01f; // Allow small rounding differences
-                    } else if (paidAmount > 0.01f) {
-                        // User has no items claimed but has made a payment (edge case)
-                        hasPaid = true;
+                    if (metadata != null && owedAmount != null) {
+                        // Use batch-fetched data
+                        float paidAmount = metadata.paidAmount;
+                        
+                        // Only mark as paid if:
+                        // 1. User has items claimed (owedAmount > 0.01) AND has paid for them
+                        // 2. OR user has no items claimed (owedAmount <= 0.01) but has made a payment (paidAmount > 0.01)
+                        boolean hasPaid = false;
+                        if (owedAmount > 0.01f) {
+                            hasPaid = paidAmount >= owedAmount - 0.01f; // Allow small rounding differences
+                        } else if (paidAmount > 0.01f) {
+                            hasPaid = true;
+                        }
+                        
+                        receiptJson.put("userOwedAmount", owedAmount);
+                        receiptJson.put("userPaidAmount", paidAmount);
+                        receiptJson.put("userHasPaid", hasPaid);
+                    } else {
+                        // Fallback to individual queries if batch fetch failed (backward compatibility)
+                        float owedAmountFallback = receiptDAO.calculateUserOwedAmount(receipt.getReceiptId(), userIdStr);
+                        float paidAmountFallback = receiptDAO.getPaidAmount(receipt.getReceiptId(), userIdStr);
+                        
+                        boolean hasPaid = false;
+                        if (owedAmountFallback > 0.01f) {
+                            hasPaid = paidAmountFallback >= owedAmountFallback - 0.01f;
+                        } else if (paidAmountFallback > 0.01f) {
+                            hasPaid = true;
+                        }
+                        
+                        receiptJson.put("userOwedAmount", owedAmountFallback);
+                        receiptJson.put("userPaidAmount", paidAmountFallback);
+                        receiptJson.put("userHasPaid", hasPaid);
                     }
-                    // Otherwise: hasPaid = false (user hasn't claimed anything and hasn't paid)
-                    
-                    receiptJson.put("userOwedAmount", owedAmount);
-                    receiptJson.put("userPaidAmount", paidAmount);
-                    receiptJson.put("userHasPaid", hasPaid);
                     
                     receiptsArray.put(receiptJson);
-                    System.out.println("[ReceiptController] STEP B9: Added receipt " + receipt.getReceiptId() + " to JSON array (size now: " + receiptsArray.length() + ")");
+                    System.out.println("[ReceiptController] STEP B10: Added receipt " + receipt.getReceiptId() + " to JSON array (size now: " + receiptsArray.length() + ")");
                 }
                 
                 System.out.println("[ReceiptController] STEP B10: Final JSON array size: " + receiptsArray.length());
@@ -823,10 +878,21 @@ public class ReceiptController {
 
     /**
      * Helper method to build a JSON object from a Receipt model.
+     * @param receipt The receipt to convert to JSON
+     * @param uploadedBy Optional uploadedBy string to avoid extra query (if already fetched)
      */
     private static JSONObject buildReceiptJson(Receipt receipt) {
+        return buildReceiptJson(receipt, null);
+    }
+    
+    /**
+     * Helper method to build a JSON object from a Receipt model.
+     * @param receipt The receipt to convert to JSON
+     * @param uploadedBy Optional uploadedBy string to avoid extra query (if already fetched)
+     */
+    private static JSONObject buildReceiptJson(Receipt receipt, String uploadedBy) {
         ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
-        String uploadedByStr = receiptDAO.getReceiptUploadedBy(receipt.getReceiptId());
+        String uploadedByStr = uploadedBy != null ? uploadedBy : receiptDAO.getReceiptUploadedBy(receipt.getReceiptId());
         
         JSONObject receiptJson = new JSONObject()
             .put("receiptId", receipt.getReceiptId())
