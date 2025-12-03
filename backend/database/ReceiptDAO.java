@@ -5,9 +5,11 @@ import models.ReceiptItem;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.Set;
 
 /**
  * Data Access Object for managing receipts in the database.
@@ -557,7 +559,7 @@ public class ReceiptDAO {
      */
     public List<Receipt> getPendingReceiptsForUser(String userId) {
         // FIX 3: Include both 'pending' and 'accepted' status, exclude completed receipts
-        String sql = "SELECT r.* FROM receipts r " +
+        String sql = "SELECT DISTINCT r.* FROM receipts r " +
                      "INNER JOIN receipt_participants rp ON r.receipt_id = rp.receipt_id " +
                      "WHERE rp.user_id = ? AND rp.status IN ('pending', 'accepted') AND r.status != 'completed' " +
                      "ORDER BY r.created_at DESC";
@@ -571,71 +573,92 @@ public class ReceiptDAO {
 
             try (ResultSet rs = pstmt.executeQuery()) {
                 System.out.println("[ReceiptDAO] Getting pending receipts for user " + userId);
-                int count = 0;
+                // First, collect all receipts from ResultSet
                 while (rs.next()) {
                     Receipt receipt = mapResultSetToReceipt(rs);
-                    // Load items for this receipt using addItem() method
-                    for (ReceiptItem item : getReceiptItems(receipt.getReceiptId())) {
-                        receipt.addItem(item);
-                    }
                     receipts.add(receipt);
-                    count++;
-                    System.out.println("[ReceiptDAO] Added pending receipt " + receipt.getReceiptId() + " (total so far: " + count + ")");
+                    System.out.println("[ReceiptDAO] Collected pending receipt " + receipt.getReceiptId() + " (total so far: " + receipts.size() + ")");
                 }
-                System.out.println("[ReceiptDAO] Found total of " + count + " pending receipts for user " + userId);
+                System.out.println("[ReceiptDAO] Found total of " + receipts.size() + " pending receipts for user " + userId);
             }
         } catch (SQLException e) {
             System.err.println("Error getting pending receipts for user: " + e.getMessage());
             e.printStackTrace();
         }
 
+        // OPTIMIZATION: Don't load items here - only load basic receipt info for list view
+        // Items will be loaded on-demand when user clicks to view receipt details
+        System.out.println("[ReceiptDAO] Skipping item loading for pending receipts list (optimization)");
         return receipts;
     }
 
     /**
-     * Get all receipts for a specific user (History - completed receipts only).
-     * Shows receipts where the receipt status is 'completed' for all participants.
-     * This ensures receipts only move to History when everyone has paid.
+     * Get all receipts for a specific user (History/Activity - all receipts except declined).
+     * Shows receipts where the user is a participant with status 'pending', 'accepted', or 'completed'.
+     * Excludes receipts where the user has declined.
      * 
      * @param userId The user's ID (VARCHAR(36))
      * @return List of Receipt objects
      */
     public List<Receipt> getAllReceiptsForUser(String userId) {
-        // FIX 3B: Only show receipts where status is 'completed'
-        // This means ALL participants have paid
-        String sql = "SELECT DISTINCT r.* " +
-                     "FROM receipts r " +
-                     "INNER JOIN receipt_participants rp ON r.receipt_id = rp.receipt_id " +
-                     "WHERE rp.user_id = ? AND r.status = 'completed' " +
+        System.out.println("[ReceiptDAO] STEP C1: getAllReceiptsForUser called for userId: " + userId);
+        // Show all receipts where:
+        // 1. User is the uploader (r.uploaded_by = ?), OR
+        // 2. User is a participant and hasn't declined (rp.user_id = ? AND rp.status != 'declined')
+        // Use UNION to avoid duplicate rows from JOIN
+        // Get receipts where user is uploader OR participant (not declined)
+        String sql = "SELECT DISTINCT r.* FROM (" +
+                     "  SELECT r.* FROM receipts r WHERE r.uploaded_by = ? " +
+                     "  UNION " +
+                     "  SELECT r.* FROM receipts r " +
+                     "  INNER JOIN receipt_participants rp ON r.receipt_id = rp.receipt_id " +
+                     "  WHERE rp.user_id = ? AND rp.status != 'declined'" +
+                     ") AS r " +
                      "ORDER BY r.created_at DESC";
         
+        System.out.println("[ReceiptDAO] STEP C2: SQL query prepared");
         List<Receipt> receipts = new ArrayList<>();
+        Set<Integer> receiptIds = new HashSet<>(); // Track unique receipt IDs
 
         try (Connection conn = dbConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
-            pstmt.setString(1, userId);
+            System.out.println("[ReceiptDAO] STEP C3: Database connection established, setting parameters");
+            pstmt.setString(1, userId); // For uploaded_by check
+            pstmt.setString(2, userId); // For participant check
+            System.out.println("[ReceiptDAO] STEP C4: Parameters set, executing query");
 
             try (ResultSet rs = pstmt.executeQuery()) {
-                System.out.println("[ReceiptDAO] Getting all receipts (History) for user " + userId);
-                int count = 0;
+                System.out.println("[ReceiptDAO] STEP C5: Query executed, iterating ResultSet");
+                int rowCount = 0;
+                // First, collect all receipts from ResultSet
                 while (rs.next()) {
+                    rowCount++;
+                    System.out.println("[ReceiptDAO] STEP C6: Processing row " + rowCount);
                     Receipt receipt = mapResultSetToReceipt(rs);
-                    // Load items for this receipt using addItem() method
-                    for (ReceiptItem item : getReceiptItems(receipt.getReceiptId())) {
-                        receipt.addItem(item);
+                    int receiptId = receipt.getReceiptId();
+                    System.out.println("[ReceiptDAO] STEP C7: Mapped receipt ID: " + receiptId + ", merchant: " + receipt.getMerchantName());
+                    
+                    // Only add if we haven't seen this receipt ID before (UNION should prevent duplicates, but be safe)
+                    if (!receiptIds.contains(receiptId)) {
+                        receiptIds.add(receiptId);
+                        receipts.add(receipt);
+                        System.out.println("[ReceiptDAO] STEP C8: Added receipt " + receiptId + " to list (total: " + receipts.size() + ")");
+                    } else {
+                        System.out.println("[ReceiptDAO] STEP C8-SKIP: Receipt " + receiptId + " already in list, skipping duplicate");
                     }
-                    receipts.add(receipt);
-                    count++;
-                    System.out.println("[ReceiptDAO] Added history receipt " + receipt.getReceiptId() + " (total so far: " + count + ")");
                 }
-                System.out.println("[ReceiptDAO] Found total of " + count + " history receipts for user " + userId);
+                System.out.println("[ReceiptDAO] STEP C9: Finished iterating ResultSet. Total rows: " + rowCount + ", Unique receipts: " + receipts.size());
             }
         } catch (SQLException e) {
-            System.err.println("Error getting all receipts for user: " + e.getMessage());
+            System.err.println("[ReceiptDAO] ERROR: Error getting all receipts for user: " + e.getMessage());
             e.printStackTrace();
         }
 
+        // OPTIMIZATION: Don't load items here - only load basic receipt info for list view
+        // Items will be loaded on-demand when user clicks to view receipt details
+        System.out.println("[ReceiptDAO] STEP C10: Skipping item loading for list view (optimization)");
+        System.out.println("[ReceiptDAO] STEP C11: Returning " + receipts.size() + " receipts without items");
         return receipts;
     }
 

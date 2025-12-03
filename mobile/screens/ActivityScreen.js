@@ -7,12 +7,13 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomNavBar from '../components/BottomNavBar';
-import { getActivityReceipts } from '../services/receiptsService';
+import { getActivityReceipts, getReceiptDetails } from '../services/receiptsService';
 
 export default function ActivityScreen() {
   const navigation = useNavigation();
@@ -23,28 +24,36 @@ export default function ActivityScreen() {
 
   const loadReceipts = async () => {
     try {
+      console.log('[ActivityScreen] STEP 1: Starting loadReceipts');
       setLoading(true);
+      
+      console.log('[ActivityScreen] STEP 2: Calling getActivityReceipts()');
       const response = await getActivityReceipts();
       
-      console.log('ActivityScreen: Received response:', {
+      console.log('[ActivityScreen] STEP 3: Received response from API:', {
         success: response.success,
         receiptsCount: response.receipts ? response.receipts.length : 0,
-        receipts: response.receipts
+        hasReceipts: !!response.receipts,
+        receipts: response.receipts ? response.receipts.map(r => ({ id: r.receiptId, merchant: r.merchantName })) : null
       });
       
       if (response.success && response.receipts) {
-        console.log('ActivityScreen: Setting receipts, count:', response.receipts.length);
+        console.log('[ActivityScreen] STEP 4: Response is successful, receipts array length:', response.receipts.length);
+        console.log('[ActivityScreen] STEP 5: About to setReceipts with', response.receipts.length, 'receipts');
+        console.log('[ActivityScreen] STEP 6: Receipt IDs:', response.receipts.map(r => r.receiptId));
         setReceipts(response.receipts);
+        console.log('[ActivityScreen] STEP 7: setReceipts called, state should update');
       } else {
-        console.error('Failed to load receipts:', response.message);
+        console.error('[ActivityScreen] ERROR: Response failed or no receipts:', response.message);
         setReceipts([]);
       }
     } catch (error) {
-      console.error('Error loading receipts:', error);
+      console.error('[ActivityScreen] EXCEPTION: Error loading receipts:', error);
       setReceipts([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
+      console.log('[ActivityScreen] STEP 8: loadReceipts completed, loading set to false');
     }
   };
 
@@ -56,6 +65,12 @@ export default function ActivityScreen() {
     };
     loadCurrentUserId();
   }, []);
+
+  // Log whenever receipts state changes
+  useEffect(() => {
+    console.log('[ActivityScreen] STEP 12: Receipts state changed, new count:', receipts.length);
+    console.log('[ActivityScreen] STEP 13: Receipt IDs in state:', receipts.map(r => r.receiptId));
+  }, [receipts]);
 
   // Load receipts when screen comes into focus
   useFocusEffect(
@@ -83,44 +98,53 @@ export default function ActivityScreen() {
     return date.toLocaleDateString();
   };
 
-  const handleReceiptClick = (receipt) => {
-    console.log('ActivityScreen: Receipt clicked:', {
-      receiptId: receipt.receiptId,
-      merchantName: receipt.merchantName,
-      itemsCount: receipt.items ? receipt.items.length : 0,
-      items: receipt.items,
-    });
+  const handleReceiptClick = async (receipt) => {
+    console.log('[ActivityScreen] Receipt clicked, fetching full details for receipt:', receipt.receiptId);
     
-    // Transform receipt data to match BillReview format
-    const billData = {
-      merchant: receipt.merchantName || 'Unknown Merchant',
-      total: receipt.totalAmount || 0,
-      subtotal: (receipt.totalAmount || 0) - (receipt.taxAmount || 0) - (receipt.tipAmount || 0),
-      tax: receipt.taxAmount || 0,
-      tip: receipt.tipAmount || 0,
-      items: (receipt.items || []).map(item => ({
-        itemId: item.itemId, // Use actual itemId from backend
-        id: item.itemId, // Also set id for compatibility
-        name: item.name,
-        qty: item.quantity || item.qty || 1, // Support both quantity and qty
-        price: item.price || 0,
-      })),
-      date: receipt.date ? new Date(receipt.date).toLocaleString() : 'Unknown date',
-    };
-    
-    console.log('ActivityScreen: Transformed billData:', {
-      itemsCount: billData.items.length,
-      items: billData.items,
-    });
-    
-    // Navigate to BillReview screen with receipt data
-    navigation.navigate('BillReview', { 
-      data: billData,
-      receiptId: receipt.receiptId,
-      uploadedBy: receipt.uploadedBy, // Pass uploadedBy to check if user is uploader
-      isFromActivity: true, // Flag to indicate this is from activity (enables item claiming)
-      userHasPaid: receipt.userHasPaid || false, // Pass payment status
-    });
+    try {
+      // Fetch full receipt details with items
+      const response = await getReceiptDetails(receipt.receiptId);
+      
+      if (!response.success || !response.receipt) {
+        console.error('[ActivityScreen] Failed to fetch receipt details:', response.message);
+        Alert.alert('Error', 'Failed to load receipt details');
+        return;
+      }
+      
+      const fullReceipt = response.receipt;
+      console.log('[ActivityScreen] Received full receipt with', fullReceipt.items?.length || 0, 'items');
+      
+      // Transform receipt data to match BillReview format
+      const billData = {
+        merchant: fullReceipt.merchantName || 'Unknown Merchant',
+        total: fullReceipt.totalAmount || 0,
+        subtotal: (fullReceipt.totalAmount || 0) - (fullReceipt.taxAmount || 0) - (fullReceipt.tipAmount || 0),
+        tax: fullReceipt.taxAmount || 0,
+        tip: fullReceipt.tipAmount || 0,
+        items: (fullReceipt.items || []).map(item => ({
+          itemId: item.itemId, // Use actual itemId from backend
+          id: item.itemId, // Also set id for compatibility
+          name: item.name,
+          qty: item.quantity || item.qty || 1, // Support both quantity and qty
+          price: item.price || 0,
+        })),
+        date: fullReceipt.date ? new Date(fullReceipt.date).toLocaleString() : 'Unknown date',
+      };
+      
+      console.log('[ActivityScreen] Transformed billData with', billData.items.length, 'items');
+      
+      // Navigate to BillReview screen with full receipt data
+      navigation.navigate('BillReview', { 
+        data: billData,
+        receiptId: fullReceipt.receiptId,
+        uploadedBy: fullReceipt.uploadedBy, // Pass uploadedBy to check if user is uploader
+        isFromActivity: true, // Flag to indicate this is from activity (enables item claiming)
+        userHasPaid: receipt.userHasPaid || false, // Pass payment status from list view
+      });
+    } catch (error) {
+      console.error('[ActivityScreen] Error fetching receipt details:', error);
+      Alert.alert('Error', 'Failed to load receipt details');
+    }
   };
 
   const ReceiptCard = ({ receipt }) => {
@@ -233,9 +257,14 @@ export default function ActivityScreen() {
               <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
             }
           >
-            {receipts.map((receipt) => (
-              <ReceiptCard key={receipt.receiptId} receipt={receipt} />
-            ))}
+            {(() => {
+              console.log('[ActivityScreen] STEP 9: Rendering receipts, count:', receipts.length);
+              console.log('[ActivityScreen] STEP 10: Receipt IDs to render:', receipts.map(r => r.receiptId));
+              return receipts.map((receipt, index) => {
+                console.log(`[ActivityScreen] STEP 11: Rendering receipt ${index + 1}/${receipts.length}, ID: ${receipt.receiptId}, merchant: ${receipt.merchantName}`);
+                return <ReceiptCard key={receipt.receiptId} receipt={receipt} />;
+              });
+            })()}
           </ScrollView>
         )}
       </View>

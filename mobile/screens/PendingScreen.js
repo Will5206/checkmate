@@ -13,7 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomNavBar from '../components/BottomNavBar';
-import { getPendingReceipts, acceptReceipt, declineReceipt } from '../services/receiptsService';
+import { getPendingReceipts, acceptReceipt, declineReceipt, getReceiptDetails } from '../services/receiptsService';
 
 export default function PendingScreen() {
   const navigation = useNavigation();
@@ -65,30 +65,51 @@ export default function PendingScreen() {
     setRefreshing(false);
   };
 
-  const handleReview = (receipt) => {
-    // Transform receipt data to match BillReview format
-    const billData = {
-      merchant: receipt.merchantName || 'Unknown Merchant',
-      total: receipt.totalAmount || 0,
-      subtotal: (receipt.totalAmount || 0) - (receipt.taxAmount || 0) - (receipt.tipAmount || 0),
-      tax: receipt.taxAmount || 0,
-      tip: receipt.tipAmount || 0,
-      items: (receipt.items || []).map(item => ({
-        itemId: item.itemId,
-        id: item.itemId,
-        name: item.name,
-        qty: item.quantity || item.qty || 1,
-        price: item.price || 0,
-      })),
-      date: receipt.date ? new Date(receipt.date).toLocaleString() : 'Unknown date',
-    };
+  const handleReview = async (receipt) => {
+    console.log('[PendingScreen] Review clicked, fetching full details for receipt:', receipt.receiptId);
     
-    // Navigate to BillReview screen with receipt data
-    navigation.navigate('BillReview', { 
-      data: billData,
-      receiptId: receipt.receiptId,
-      isFromActivity: true, // Enable item claiming
-    });
+    try {
+      // Fetch full receipt details with items
+      const response = await getReceiptDetails(receipt.receiptId);
+      
+      if (!response.success || !response.receipt) {
+        console.error('[PendingScreen] Failed to fetch receipt details:', response.message);
+        Alert.alert('Error', 'Failed to load receipt details');
+        return;
+      }
+      
+      const fullReceipt = response.receipt;
+      console.log('[PendingScreen] Received full receipt with', fullReceipt.items?.length || 0, 'items');
+      
+      // Transform receipt data to match BillReview format
+      const billData = {
+        merchant: fullReceipt.merchantName || 'Unknown Merchant',
+        total: fullReceipt.totalAmount || 0,
+        subtotal: (fullReceipt.totalAmount || 0) - (fullReceipt.taxAmount || 0) - (fullReceipt.tipAmount || 0),
+        tax: fullReceipt.taxAmount || 0,
+        tip: fullReceipt.tipAmount || 0,
+        items: (fullReceipt.items || []).map(item => ({
+          itemId: item.itemId,
+          id: item.itemId,
+          name: item.name,
+          qty: item.quantity || item.qty || 1,
+          price: item.price || 0,
+        })),
+        date: fullReceipt.date ? new Date(fullReceipt.date).toLocaleString() : 'Unknown date',
+      };
+      
+      console.log('[PendingScreen] Transformed billData with', billData.items.length, 'items');
+      
+      // Navigate to BillReview screen with full receipt data
+      navigation.navigate('BillReview', { 
+        data: billData,
+        receiptId: fullReceipt.receiptId,
+        isFromActivity: true, // Enable item claiming
+      });
+    } catch (error) {
+      console.error('[PendingScreen] Error fetching receipt details:', error);
+      Alert.alert('Error', 'Failed to load receipt details');
+    }
   };
 
   const handleAccept = async (receiptId) => {
@@ -245,20 +266,7 @@ export default function PendingScreen() {
           </View>
         </View>
 
-        {receipt.items && receipt.items.length > 0 && (
-          <View style={styles.itemsPreview}>
-            {receipt.items.slice(0, 3).map((item, index) => (
-              <Text key={index} style={styles.itemPreviewText}>
-                • {item.name} ${item.price?.toFixed(2)}
-              </Text>
-            ))}
-            {receipt.items.length > 3 && (
-              <Text style={styles.itemPreviewText}>
-                +{receipt.items.length - 3} more item{receipt.items.length - 3 !== 1 ? 's' : ''}
-              </Text>
-            )}
-          </View>
-        )}
+        {/* Items preview removed for performance - items are loaded on-demand when viewing receipt */}
 
         <View style={styles.actionButtons}>
           <TouchableOpacity

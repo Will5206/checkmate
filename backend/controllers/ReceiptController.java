@@ -309,10 +309,19 @@ public class ReceiptController {
             
             Map<String, String> query = parseQuery(exchange.getRequestURI());
             try {
-                int userId = Integer.parseInt(query.getOrDefault("userId", ""));
-                int receiptId = Integer.parseInt(query.getOrDefault("receiptId", ""));
+                String userIdStr = query.getOrDefault("userId", "");
+                int receiptId = Integer.parseInt(query.getOrDefault("receiptId", "0"));
                 
-                Receipt receipt = receiptService.getReceipt(userId, receiptId);
+                if (userIdStr.isEmpty() || receiptId == 0) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "userId and receiptId parameters are required"));
+                    return;
+                }
+                
+                // Get full receipt with items loaded
+                ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
+                Receipt receipt = receiptDAO.getReceiptById(receiptId);
                 
                 if (receipt == null) {
                     sendJson(exchange, 404, new JSONObject()
@@ -321,9 +330,20 @@ public class ReceiptController {
                     return;
                 }
                 
+                // Verify user has access (uploader or participant)
+                String uploadedBy = receiptDAO.getReceiptUploadedBy(receiptId);
+                String participantStatus = receiptDAO.getParticipantStatus(receiptId, userIdStr);
+                
+                if (uploadedBy == null || (!uploadedBy.equals(userIdStr) && participantStatus == null)) {
+                    sendJson(exchange, 403, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Access denied"));
+                    return;
+                }
+                
                 // Build receipt JSON with all details including items
                 JSONObject receiptJson = buildReceiptJson(receipt);
-                receiptJson.put("status", receiptService.getReceiptStatus(userId, receiptId));
+                receiptJson.put("status", receiptService.getReceiptStatus(userIdStr, receiptId));
                 
                 JSONObject resp = new JSONObject()
                     .put("success", true)
@@ -667,24 +687,37 @@ public class ReceiptController {
             
             Map<String, String> query = parseQuery(exchange.getRequestURI());
             try {
+                System.out.println("[ReceiptController] STEP B1: GetActivityReceiptsHandler - Request received");
                 String userIdStr = query.getOrDefault("userId", "");
+                System.out.println("[ReceiptController] STEP B2: Extracted userId: " + userIdStr);
                 
                 if (userIdStr.isEmpty()) {
+                    System.out.println("[ReceiptController] ERROR: userId is empty");
                     sendJson(exchange, 400, new JSONObject()
                         .put("success", false)
                         .put("message", "userId parameter is required"));
                     return;
                 }
                 
+                System.out.println("[ReceiptController] STEP B3: Calling receiptService.getAllReceiptsForUser(" + userIdStr + ")");
                 // Get all receipts for this user (accepted, declined, or uploaded)
                 List<Receipt> receipts = receiptService.getAllReceiptsForUser(userIdStr);
+                System.out.println("[ReceiptController] STEP B4: Received " + receipts.size() + " receipts from service");
+                for (int i = 0; i < receipts.size(); i++) {
+                    Receipt r = receipts.get(i);
+                    System.out.println("[ReceiptController] STEP B5: Receipt " + (i+1) + ": ID=" + r.getReceiptId() + ", merchant=" + r.getMerchantName());
+                }
+                
                 ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
                 
-                System.out.println("[ReceiptController] GetActivityReceiptsHandler - Found " + receipts.size() + " receipts for user " + userIdStr);
-                
+                System.out.println("[ReceiptController] STEP B6: Building JSON array for " + receipts.size() + " receipts");
                 JSONArray receiptsArray = new JSONArray();
-                for (Receipt receipt : receipts) {
+                for (int i = 0; i < receipts.size(); i++) {
+                    Receipt receipt = receipts.get(i);
+                    System.out.println("[ReceiptController] STEP B7: Processing receipt " + (i+1) + "/" + receipts.size() + " (ID: " + receipt.getReceiptId() + ")");
+                    
                     JSONObject receiptJson = buildReceiptJson(receipt);
+                    System.out.println("[ReceiptController] STEP B8: Built JSON for receipt " + receipt.getReceiptId());
                     
                     // Add payment status for this user
                     float owedAmount = receiptDAO.calculateUserOwedAmount(receipt.getReceiptId(), userIdStr);
@@ -709,9 +742,11 @@ public class ReceiptController {
                     receiptJson.put("userHasPaid", hasPaid);
                     
                     receiptsArray.put(receiptJson);
+                    System.out.println("[ReceiptController] STEP B9: Added receipt " + receipt.getReceiptId() + " to JSON array (size now: " + receiptsArray.length() + ")");
                 }
                 
-                System.out.println("[ReceiptController] GetActivityReceiptsHandler - Returning " + receiptsArray.length() + " receipts in JSON array");
+                System.out.println("[ReceiptController] STEP B10: Final JSON array size: " + receiptsArray.length());
+                System.out.println("[ReceiptController] STEP B11: Returning response with " + receiptsArray.length() + " receipts");
                 
                 JSONObject resp = new JSONObject()
                     .put("success", true)
@@ -719,6 +754,7 @@ public class ReceiptController {
                     .put("receipts", receiptsArray);
                 
                 sendJson(exchange, 200, resp);
+                System.out.println("[ReceiptController] STEP B12: Response sent successfully");
             } catch (Exception e) {
                 sendJson(exchange, 400, new JSONObject()
                     .put("success", false)

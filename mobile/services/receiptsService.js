@@ -165,6 +165,54 @@ export async function declineReceipt(receiptId) {
  */
 export async function getActivityReceipts() {
   try {
+    console.log('[receiptsService] STEP A1: getActivityReceipts called');
+    const userId = await AsyncStorage.getItem('userId');
+    console.log('[receiptsService] STEP A2: Got userId from storage:', userId ? 'exists' : 'null');
+
+    if (!userId) {
+      console.log('[receiptsService] STEP A3: No userId, returning error');
+      return {
+        success: false,
+        message: 'User not logged in',
+      };
+    }
+
+    const url = `${API_BASE_URL}/receipts/activity?userId=${encodeURIComponent(userId)}`;
+    console.log('[receiptsService] STEP A4: Making fetch request to:', url);
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    console.log('[receiptsService] STEP A5: Fetch response status:', response.status);
+    const data = await response.json();
+    console.log('[receiptsService] STEP A6: Parsed JSON response:', {
+      success: data.success,
+      receiptsCount: data.receipts ? data.receipts.length : 0,
+      receiptIds: data.receipts ? data.receipts.map(r => r.receiptId) : []
+    });
+    
+    return data;
+
+  } catch (error) {
+    console.error('[receiptsService] EXCEPTION: Get activity receipts error:', error);
+    return {
+      success: false,
+      message: 'Network error. Please check your connection.',
+    };
+  }
+}
+
+/**
+ * Get full receipt details with items (for viewing receipt details)
+ * @param {number} receiptId - The receipt ID
+ * @returns {Promise<Object>} Response with success status and full receipt data including items
+ */
+export async function getReceiptDetails(receiptId) {
+  try {
     const userId = await AsyncStorage.getItem('userId');
 
     if (!userId) {
@@ -175,7 +223,7 @@ export async function getActivityReceipts() {
     }
 
     const response = await fetch(
-      `${API_BASE_URL}/receipts/activity?userId=${encodeURIComponent(userId)}`,
+      `${API_BASE_URL}/receipts/view?receiptId=${receiptId}&userId=${encodeURIComponent(userId)}`,
       {
         method: 'GET',
         headers: {
@@ -188,7 +236,7 @@ export async function getActivityReceipts() {
     return data;
 
   } catch (error) {
-    console.error('Get activity receipts error:', error);
+    console.error('Get receipt details error:', error);
     return {
       success: false,
       message: 'Network error. Please check your connection.',
