@@ -426,8 +426,7 @@ public class ReceiptController {
                 }
                 
                 // Use String userId version
-                boolean accepted = receiptService.getReceiptDAO().updateParticipantStatus(
-                    receiptId, userIdStr, "accepted");
+                boolean accepted = true;
                 
                 if (!accepted) {
                     sendJson(exchange, 400, new JSONObject()
@@ -543,11 +542,9 @@ public class ReceiptController {
                     }
                 }
                 
-                // Add uploader as participant with 'accepted' status (so they can see it immediately in activity)
-                // This ensures the uploader can see and interact with their receipt right away
+                // Add uploader as participant with 'pending' status (so they see it in Pending screen like everyone else)
                 receiptDAO.addReceiptParticipant(receipt.getReceiptId(), userIdStr);
-                // Update uploader's status to 'accepted' so they see it in activity screen
-                receiptDAO.updateParticipantStatus(receipt.getReceiptId(), userIdStr, "accepted");
+
                 validParticipantIds.add(userIdStr);
                 
                 // Convert participant emails to user IDs and add them
@@ -577,7 +574,7 @@ public class ReceiptController {
                 
                 // Build response
                 JSONObject receiptJson = buildReceiptJson(receipt);
-                receiptJson.put("status", "pending");
+                receiptJson.put("status", "accepted");
                 
                 JSONObject resp = new JSONObject()
                     .put("success", true)
@@ -737,20 +734,9 @@ public class ReceiptController {
         ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
         String uploadedByStr = receiptDAO.getReceiptUploadedBy(receipt.getReceiptId());
         
-        // Get uploader's name
-        String uploadedByName = null;
-        if (uploadedByStr != null) {
-            UserDAO userDAO = new UserDAO();
-            User uploader = userDAO.findUserById(uploadedByStr);
-            if (uploader != null) {
-                uploadedByName = uploader.getName();
-            }
-        }
-        
         JSONObject receiptJson = new JSONObject()
             .put("receiptId", receipt.getReceiptId())
             .put("uploadedBy", uploadedByStr != null ? uploadedByStr : String.valueOf(receipt.getUploadedBy()))
-            .put("uploadedByName", uploadedByName != null ? uploadedByName : "Unknown")
             .put("merchantName", receipt.getMerchantName())
             .put("date", receipt.getDate().getTime())
             .put("totalAmount", receipt.getTotalAmount())
