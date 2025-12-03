@@ -737,9 +737,20 @@ public class ReceiptController {
         ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
         String uploadedByStr = receiptDAO.getReceiptUploadedBy(receipt.getReceiptId());
         
+        // Get uploader's name
+        String uploadedByName = null;
+        if (uploadedByStr != null) {
+            UserDAO userDAO = new UserDAO();
+            User uploader = userDAO.findUserById(uploadedByStr);
+            if (uploader != null) {
+                uploadedByName = uploader.getName();
+            }
+        }
+        
         JSONObject receiptJson = new JSONObject()
             .put("receiptId", receipt.getReceiptId())
             .put("uploadedBy", uploadedByStr != null ? uploadedByStr : String.valueOf(receipt.getUploadedBy()))
+            .put("uploadedByName", uploadedByName != null ? uploadedByName : "Unknown")
             .put("merchantName", receipt.getMerchantName())
             .put("date", receipt.getDate().getTime())
             .put("totalAmount", receipt.getTotalAmount())

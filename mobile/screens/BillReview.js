@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,8 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -51,6 +53,8 @@ export default function BillReview() {
   const [userHasPaid, setUserHasPaid] = useState(false); // Boolean: true only after payment is fully processed
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
   const [claimingItems, setClaimingItems] = useState(new Set()); // Track items being claimed to prevent double-clicks
+  const scrollViewRef = useRef(null);
+  const emailInputRef = useRef(null);
 
   // Check for parsed receipt data from route params or AsyncStorage
   useEffect(() => {
@@ -354,6 +358,107 @@ export default function BillReview() {
 
   const subtotal = billData.subtotal || (billData.total - billData.tax - billData.tip);
 
+  // Helper function to calculate item total with tax and tip
+  const calculateItemTotal = (itemPrice) => {
+    if (!subtotal || subtotal === 0) return itemPrice;
+    const proportion = itemPrice / subtotal;
+    const itemTax = billData.tax * proportion;
+    const itemTip = billData.tip * proportion;
+    return itemPrice + itemTax + itemTip;
+  };
+
+  // Get user's claimed items
+  const getMyItems = () => {
+    return billData.items.filter((item) => {
+      const itemId = item.itemId || item.id;
+      return itemAssignments[itemId] && itemAssignments[itemId] > 0;
+    }).map((item) => {
+      const itemId = item.itemId || item.id;
+      const qty = itemAssignments[itemId] || 1;
+      return {
+        ...item,
+        qty: qty,
+        totalPrice: item.price * qty,
+      };
+    });
+  };
+
+  const [otherParticipants, setOtherParticipants] = useState([]);
+  const [currentUserId, setCurrentUserId] = useState(null);
+
+  // Get current user ID on mount
+  useEffect(() => {
+    const loadUserId = async () => {
+      const userId = await AsyncStorage.getItem('userId');
+      setCurrentUserId(userId);
+    };
+    loadUserId();
+  }, []);
+
+  // Get other participants and their paid items
+  useEffect(() => {
+    if (!receiptId || !isFromActivity || !currentUserId || Object.keys(itemPaymentInfo).length === 0) {
+      setOtherParticipants([]);
+      return;
+    }
+    
+    // Group items by payer from itemPaymentInfo
+    const participantsMap = new Map();
+    
+    billData.items.forEach((item) => {
+      const itemId = item.itemId || item.id;
+      const paymentInfo = itemPaymentInfo[String(itemId)] || itemPaymentInfo[itemId];
+      
+      if (paymentInfo && paymentInfo.paidBy && paymentInfo.paidBy !== currentUserId) {
+        const payerId = paymentInfo.paidBy;
+        const payerName = paymentInfo.payerName || 'Unknown';
+        
+        if (!participantsMap.has(payerId)) {
+          participantsMap.set(payerId, {
+            userId: payerId,
+            name: payerName,
+            initials: getInitials(payerName),
+            items: [],
+            totalAmount: 0,
+          });
+        }
+        
+        const participant = participantsMap.get(payerId);
+        const itemTotal = calculateItemTotal(item.price * (item.qty || 1));
+        participant.items.push(item.name);
+        participant.totalAmount += itemTotal;
+      }
+    });
+    
+    setOtherParticipants(Array.from(participantsMap.values()));
+  }, [itemPaymentInfo, isFromActivity, receiptId, currentUserId, billData.items]);
+
+  // Get initials from name
+  const getInitials = (name) => {
+    if (!name) return '?';
+    const parts = name.trim().split(' ');
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return name.substring(0, 2).toUpperCase();
+  };
+
+  // Format date for display
+  const formatDisplayDate = (dateStr) => {
+    if (!dateStr) return 'Unknown date';
+    try {
+      const date = new Date(dateStr);
+      if (isNaN(date.getTime())) return dateStr;
+      return date.toLocaleDateString('en-US', { 
+        month: 'long', 
+        day: 'numeric', 
+        year: 'numeric' 
+      });
+    } catch {
+      return dateStr;
+    }
+  };
+
   const handleCreateAndShare = async () => {
     if (!friendsEmails.trim()) {
       Alert.alert('Error', 'Please enter at least one friend\'s email address');
@@ -423,76 +528,138 @@ export default function BillReview() {
     setIsCreating(false);
   };
 
+  const myItems = getMyItems();
+  const myItemsTotal = myItems.reduce((sum, item) => sum + calculateItemTotal(item.totalPrice), 0);
+
   return (
     <View style={styles.wrapper}>
-      <ScrollView 
-        style={styles.container}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
+      {/* Header with Back Button */}
+      <View style={styles.headerContainer}>
+        <TouchableOpacity 
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+        >
+          <Ionicons name="arrow-back" size={24} color="#111827" />
+        </TouchableOpacity>
+        <View style={styles.headerContent}>
+          <Text style={styles.headerTitle}>{billData.restaurant_name}</Text>
+          <View style={styles.headerDateRow}>
+            <Ionicons name="time-outline" size={14} color="#6B7280" />
+            <Text style={styles.headerDate}>
+              {formatDisplayDate(billData.date)} • {billData.date.includes('PM') || billData.date.includes('AM') ? billData.date.split(' ').slice(-2).join(' ') : ''}
+            </Text>
+          </View>
+        </View>
+      </View>
+
+      <KeyboardAvoidingView 
+        style={styles.keyboardAvoid}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.restaurantName}>{billData.restaurant_name}</Text>
-          <Text style={styles.date}>{billData.date}</Text>
-          {isFromCamera && (
-            <View style={styles.badgeContainer}>
-              <View style={styles.badge}>
-                <Ionicons name="camera" size={14} color="#059669" />
-                <Text style={styles.badgeText}>Scanned from receipt</Text>
+        <ScrollView 
+          ref={scrollViewRef}
+          style={styles.container}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+        {/* Payment Summary Card */}
+        {isFromActivity && userHasPaid && (
+          <View style={styles.paymentSummaryCard}>
+            <View style={styles.paymentSummaryContent}>
+              <View>
+                <Text style={styles.paymentAmount}>${myItemsTotal.toFixed(2)}</Text>
+                <Text style={styles.paymentLabel}>You paid</Text>
+              </View>
+              <View style={styles.paymentStatus}>
+                <Ionicons name="checkmark-circle" size={24} color="#059669" />
+                <View style={styles.paidBadgeLarge}>
+                  <Text style={styles.paidBadgeLargeText}>Paid</Text>
+                </View>
               </View>
             </View>
-          )}
-        </View>
+          </View>
+        )}
 
-        {/* Total Summary */}
-        <View style={styles.totalCard}>
-          <View style={styles.totalCardContent}>
-            <View>
-              <Text style={styles.totalAmount}>${billData.total.toFixed(2)}</Text>
-              <Text style={styles.totalLabel}>Total Bill</Text>
+        {/* What You Paid For - Only show if user has claimed items */}
+        {isFromActivity && myItems.length > 0 && (
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>What You Paid For</Text>
             </View>
-            <View style={styles.totalRight}>
-              <Ionicons name="people" size={24} color="#2563eb" />
-              <Text style={styles.readyText}>Ready to split</Text>
+            <View style={styles.cardContent}>
+              {myItems.map((item, index) => (
+                <View key={item.itemId || item.id} style={styles.myItemRow}>
+                  <View style={styles.myItemInfo}>
+                    <Text style={styles.myItemName}>{item.name}</Text>
+                    <Text style={styles.myItemSubtext}>Item: ${item.price.toFixed(2)}</Text>
+                  </View>
+                  <Text style={styles.myItemTotal}>${calculateItemTotal(item.totalPrice).toFixed(2)}</Text>
+                </View>
+              ))}
             </View>
           </View>
-        </View>
+        )}
 
-        {/* Items List */}
+        {/* Other People - Show participants who have paid */}
+        {isFromActivity && otherParticipants.length > 0 && (
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <View style={styles.cardHeaderWithIcon}>
+                <Ionicons name="people-outline" size={20} color="#111827" />
+                <Text style={styles.cardTitle}>
+                  Other People ({otherParticipants.length})
+                </Text>
+              </View>
+            </View>
+            <View style={styles.cardContent}>
+              {otherParticipants.map((participant, index) => (
+                <View key={participant.userId}>
+                  <View style={styles.participantRow}>
+                    <View style={styles.participantLeft}>
+                      <View style={styles.avatar}>
+                        <Text style={styles.avatarText}>{participant.initials}</Text>
+                      </View>
+                      <View style={styles.participantInfo}>
+                        <Text style={styles.participantName}>{participant.name}</Text>
+                        <Text style={styles.participantAmount}>${participant.totalAmount.toFixed(2)}</Text>
+                      </View>
+                    </View>
+                  </View>
+                  <View style={styles.participantItems}>
+                    {participant.items.map((itemName, itemIndex) => (
+                      <Text key={itemIndex} style={styles.participantItemText}>
+                        • {itemName}
+                      </Text>
+                    ))}
+                  </View>
+                  {index < otherParticipants.length - 1 && <View style={styles.separator} />}
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* All Items - For claiming (when not paid) or viewing all items */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Items ({billData.items.length})</Text>
-            {!isFromActivity && (
-              <TouchableOpacity>
-                <Ionicons name="create-outline" size={20} color={colors.primary} />
-              </TouchableOpacity>
-            )}
+            <Text style={styles.cardTitle}>
+              {isFromActivity ? 'Items' : `Items (${billData.items.length})`}
+            </Text>
           </View>
-          <View style={styles.itemsList}>
+          <View style={styles.cardContent}>
             {billData.items.length === 0 ? (
               <View style={styles.emptyItemsContainer}>
                 <Text style={styles.emptyItemsText}>No items found</Text>
-                {isFromActivity && (
-                  <Text style={styles.emptyItemsSubtext}>
-                    This receipt may not have items loaded. Please check the backend logs.
-                  </Text>
-                )}
               </View>
             ) : (
               billData.items.map((item, index) => {
                 const itemId = item.itemId || item.id;
                 const isClaimed = itemId && itemAssignments[itemId] && itemAssignments[itemId] > 0;
-                
-                // Check payment info - backend returns string keys, so try both string and number
                 const paymentInfo = itemPaymentInfo[String(itemId)] || itemPaymentInfo[itemId] || null;
                 const isPaid = paymentInfo != null;
                 const payerName = paymentInfo?.payerName || null;
-                
-                // Debug logging
-                if (isFromActivity && index === 0) {
-                  console.log('BillReview: First item - itemId:', itemId, 'isFromActivity:', isFromActivity, 'itemAssignments:', itemAssignments, 'isPaid:', isPaid, 'paymentInfo:', paymentInfo, 'itemPaymentInfo keys:', Object.keys(itemPaymentInfo));
-                }
-                
                 const isClaiming = claimingItems.has(itemId);
                 
                 return (
@@ -511,14 +678,12 @@ export default function BillReview() {
                       <View style={styles.itemInfo}>
                         <View style={styles.itemNameRow}>
                           <Text style={[styles.itemName, isPaid && styles.itemNamePaid]}>{item.name}</Text>
-                          {/* Show "Paid by [name]" if item is paid - this takes priority over claim status */}
                           {isPaid ? (
                             <View style={styles.paidBadge}>
                               <Ionicons name="checkmark-circle" size={16} color="#059669" />
                               <Text style={styles.paidBadgeText}>Paid by {payerName || 'Someone'}</Text>
                             </View>
                           ) : (
-                            /* Only show claim badge if item is not paid and we're viewing from Activity */
                             isFromActivity && (
                               <View style={[styles.claimBadge, isClaimed && styles.claimBadgeActive]}>
                                 <Ionicons 
@@ -549,13 +714,13 @@ export default function BillReview() {
           </View>
         </View>
 
-        {/* Your Portion (only shown when viewing from Activity) */}
-        {isFromActivity && (
+        {/* Your Portion - Payment Section (only shown when viewing from Activity and not paid) */}
+        {isFromActivity && !userHasPaid && (
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>Your Portion</Text>
             </View>
-            <View style={styles.breakdownContent}>
+            <View style={styles.cardContent}>
               <View style={styles.breakdownRow}>
                 <Text style={styles.totalLabelBold}>Amount Owed</Text>
                 <Text style={styles.totalValueBold}>${owedAmount.toFixed(2)}</Text>
@@ -563,42 +728,41 @@ export default function BillReview() {
               {Object.keys(itemAssignments).length === 0 && (
                 <Text style={styles.hintText}>Tap items above to claim them and calculate your portion</Text>
               )}
-              {owedAmount > 0.01 && !userHasPaid && (
+              {owedAmount > 0.01 && (
                 <TouchableOpacity style={styles.payButton} onPress={handlePay}>
-                  <Ionicons name="card-outline" size={20} color="#fff" style={styles.buttonIcon} />
+                  <Ionicons name="card-outline" size={20} color="#fff" />
                   <Text style={styles.payButtonText}>Pay ${owedAmount.toFixed(2)}</Text>
                 </TouchableOpacity>
-              )}
-              {userHasPaid && (
-                <View style={[styles.paidBadge, { marginTop: 10, padding: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }]}>
-                  <Ionicons name="checkmark-circle" size={20} color="#059669" />
-                  <Text style={[styles.paidBadgeText, { marginLeft: 8 }]}>You have paid for your items</Text>
-                </View>
               )}
             </View>
           </View>
         )}
 
-        {/* Bill Breakdown */}
+        {/* Bill Summary */}
         <View style={styles.card}>
-          <View style={styles.breakdownContent}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Bill Summary</Text>
+          </View>
+          <View style={styles.cardContent}>
             <View style={styles.breakdownRow}>
               <Text style={styles.breakdownLabel}>Subtotal</Text>
               <Text style={styles.breakdownValue}>${subtotal.toFixed(2)}</Text>
             </View>
             <View style={styles.breakdownRow}>
-              <Text style={styles.breakdownLabel}>Tax</Text>
-              <Text style={styles.breakdownValue}>${billData.tax.toFixed(2)}</Text>
-            </View>
-            <View style={styles.breakdownRow}>
-              <Text style={styles.breakdownLabel}>Tip</Text>
-              <Text style={styles.breakdownValue}>${billData.tip.toFixed(2)}</Text>
+              <Text style={styles.breakdownLabel}>Tax & Tip</Text>
+              <Text style={styles.breakdownValue}>${(billData.tax + billData.tip).toFixed(2)}</Text>
             </View>
             <View style={styles.separator} />
             <View style={styles.breakdownRow}>
-              <Text style={styles.totalLabelBold}>Total</Text>
+              <Text style={styles.totalLabelBold}>Total Bill</Text>
               <Text style={styles.totalValueBold}>${billData.total.toFixed(2)}</Text>
             </View>
+            {isFromActivity && myItems.length > 0 && (
+              <View style={styles.breakdownRow}>
+                <Text style={styles.yourShareLabel}>Your Share</Text>
+                <Text style={styles.yourShareValue}>${myItemsTotal.toFixed(2)}</Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -613,6 +777,7 @@ export default function BillReview() {
                 Enter email addresses (separated by commas)
               </Text>
               <TextInput
+                ref={emailInputRef}
                 style={styles.input}
                 placeholder="sarah@email.com, mike@email.com"
                 placeholderTextColor={colors.textLight}
@@ -621,6 +786,14 @@ export default function BillReview() {
                 multiline={false}
                 autoCapitalize="none"
                 keyboardType="email-address"
+                returnKeyType="done"
+                blurOnSubmit={true}
+                onFocus={() => {
+                  // Scroll to end to show input above keyboard
+                  setTimeout(() => {
+                    scrollViewRef.current?.scrollToEnd({ animated: true });
+                  }, 300);
+                }}
               />
               
               <View style={styles.buttonContainer}>
@@ -652,7 +825,22 @@ export default function BillReview() {
             </View>
           </View>
         )}
-      </ScrollView>
+
+        {/* View Receipt Button */}
+        {billData.imageUrl && (
+          <TouchableOpacity 
+            style={styles.viewReceiptButton}
+            onPress={() => {
+              // Open receipt image - you can implement image viewer here
+              Alert.alert('View Receipt', 'Receipt image viewer coming soon!');
+            }}
+          >
+            <Ionicons name="receipt-outline" size={20} color="#059669" />
+            <Text style={styles.viewReceiptButtonText}>View Original Receipt</Text>
+          </TouchableOpacity>
+        )}
+        </ScrollView>
+      </KeyboardAvoidingView>
       <BottomNavBar />
     </View>
   );
@@ -663,12 +851,88 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
+  keyboardAvoid: {
+    flex: 1,
+  },
   container: {
     flex: 1,
   },
   scrollContent: {
     padding: spacing.md,
     paddingBottom: 120, // Space for bottom nav bar
+  },
+  headerContainer: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 24,
+    paddingTop: 48,
+    paddingBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  backButton: {
+    marginBottom: 12,
+  },
+  headerContent: {
+    marginLeft: 0,
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  headerDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  headerDate: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  paymentSummaryCard: {
+    backgroundColor: '#D1FAE5',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    marginBottom: spacing.md,
+    marginTop: spacing.md,
+  },
+  paymentSummaryContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+  },
+  paymentAmount: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#065F46',
+    marginBottom: 4,
+  },
+  paymentLabel: {
+    fontSize: 14,
+    color: '#047857',
+    fontWeight: '600',
+  },
+  paymentStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  paidBadgeLarge: {
+    backgroundColor: '#A7F3D0',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  paidBadgeLargeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#065F46',
   },
   header: {
     alignItems: 'center',
@@ -750,10 +1014,19 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     paddingBottom: spacing.sm,
   },
+  cardHeaderWithIcon: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   cardTitle: {
-    fontSize: typography.sizes.lg,
-    fontWeight: 'bold',
-    color: colors.text,
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  cardContent: {
+    padding: spacing.md,
+    paddingTop: 0,
   },
   itemsList: {
     paddingTop: 0,
@@ -974,5 +1247,104 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.sm,
     color: colors.textLight,
     textAlign: 'center',
+  },
+  myItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  myItemInfo: {
+    flex: 1,
+  },
+  myItemName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  myItemSubtext: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  myItemTotal: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+  },
+  participantRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  participantLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  avatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  participantInfo: {
+    flex: 1,
+  },
+  participantName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  participantAmount: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  participantItems: {
+    marginLeft: 52,
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  participantItemText: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginBottom: 4,
+  },
+  yourShareLabel: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  yourShareValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  viewReceiptButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 12,
+    padding: 16,
+    marginTop: spacing.sm,
+    gap: 8,
+  },
+  viewReceiptButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#059669',
   },
 });

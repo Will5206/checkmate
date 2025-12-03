@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomNavBar from '../components/BottomNavBar';
 import { getPendingReceipts, acceptReceipt, declineReceipt } from '../services/receiptsService';
 
@@ -20,8 +21,14 @@ export default function PendingScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [processingIds, setProcessingIds] = useState(new Set());
+  const [currentUserId, setCurrentUserId] = useState(null);
 
   useEffect(() => {
+    const loadCurrentUserId = async () => {
+      const userId = await AsyncStorage.getItem('userId');
+      setCurrentUserId(userId);
+    };
+    loadCurrentUserId();
     loadPendingReceipts();
   }, []);
 
@@ -200,6 +207,10 @@ export default function PendingScreen() {
   const PendingReceiptCard = ({ receipt }) => {
     const isProcessing = processingIds.has(receipt.receiptId);
     const itemCount = receipt.items?.length || 0;
+    
+    // Determine sender display text
+    const isUploader = currentUserId && receipt.uploadedBy && currentUserId === receipt.uploadedBy;
+    const senderName = isUploader ? 'You' : (receipt.uploadedByName || 'Unknown');
 
     return (
       <View style={styles.receiptCard}>
@@ -220,9 +231,17 @@ export default function PendingScreen() {
             </View>
           </View>
           <View style={styles.amountContainer}>
-            <Text style={styles.amountText}>
-              ${receipt.totalAmount?.toFixed(2) || '0.00'}
-            </Text>
+            <View style={styles.amountSection}>
+              <Text style={styles.amountText}>
+                ${receipt.totalAmount?.toFixed(2) || '0.00'}
+              </Text>
+              <View style={styles.senderRow}>
+                <Ionicons name="person-outline" size={10} color="#9CA3AF" />
+                <Text style={styles.senderText}>
+                  {isUploader ? 'You' : senderName}
+                </Text>
+              </View>
+            </View>
           </View>
         </View>
 
@@ -466,6 +485,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6B7280',
   },
+  senderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginTop: 1,
+  },
+  senderText: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    fontWeight: '400',
+    lineHeight: 14,
+  },
   itemCountText: {
     fontSize: 12,
     color: '#9CA3AF',
@@ -473,11 +504,17 @@ const styles = StyleSheet.create({
   },
   amountContainer: {
     alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  amountSection: {
+    alignItems: 'flex-end',
   },
   amountText: {
     fontSize: 20,
     fontWeight: '700',
     color: '#111827',
+    lineHeight: 24,
+    marginBottom: 2,
   },
   itemsPreview: {
     backgroundColor: '#F9FAFB',

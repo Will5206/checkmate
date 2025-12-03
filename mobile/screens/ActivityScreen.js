@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomNavBar from '../components/BottomNavBar';
 import { getActivityReceipts } from '../services/receiptsService';
 
@@ -18,6 +19,7 @@ export default function ActivityScreen() {
   const [receipts, setReceipts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState(null);
 
   const loadReceipts = async () => {
     try {
@@ -45,6 +47,15 @@ export default function ActivityScreen() {
       setRefreshing(false);
     }
   };
+
+  // Load current user ID
+  useEffect(() => {
+    const loadCurrentUserId = async () => {
+      const userId = await AsyncStorage.getItem('userId');
+      setCurrentUserId(userId);
+    };
+    loadCurrentUserId();
+  }, []);
 
   // Load receipts when screen comes into focus
   useFocusEffect(
@@ -119,6 +130,10 @@ export default function ActivityScreen() {
     const userHasPaid = receipt.userHasPaid || false; // Check if current user has paid
     const itemCount = receipt.items ? receipt.items.length : 0;
     
+    // Determine sender display text
+    const isUploader = currentUserId && receipt.uploadedBy && currentUserId === receipt.uploadedBy;
+    const senderName = isUploader ? 'You' : (receipt.uploadedByName || 'Unknown');
+    
     return (
       <TouchableOpacity
         style={styles.pastCard}
@@ -150,25 +165,37 @@ export default function ActivityScreen() {
             </View>
           </View>
           <View style={styles.cardRight}>
-            <Text style={styles.amountText}>
-              ${(receipt.totalAmount || 0).toFixed(2)}
-            </Text>
-            <View style={[
-              styles.paidBadge, 
-              !isAccepted && !userHasPaid && styles.pendingBadge,
-              isCompleted && styles.completedBadge,
-              userHasPaid && !isCompleted && styles.paidStatusBadge
-            ]}>
-              <Text style={[
-                styles.paidBadgeText, 
-                !isAccepted && !userHasPaid && styles.pendingBadgeText,
-                isCompleted && styles.completedBadgeText,
-                userHasPaid && !isCompleted && styles.paidStatusBadgeText
-              ]}>
-                {isCompleted ? 'Completed' : userHasPaid ? 'Paid' : isAccepted ? 'Accepted' : 'Pending'}
-              </Text>
+            <View style={styles.cardRightContent}>
+              <View style={styles.amountSection}>
+                <Text style={styles.amountText}>
+                  ${(receipt.totalAmount || 0).toFixed(2)}
+                </Text>
+                <View style={styles.senderRow}>
+                  <Ionicons name="person-outline" size={10} color="#9CA3AF" />
+                  <Text style={styles.senderText}>
+                    {isUploader ? 'You' : senderName}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.statusSection}>
+                <View style={[
+                  styles.paidBadge, 
+                  !isAccepted && !userHasPaid && styles.pendingBadge,
+                  isCompleted && styles.completedBadge,
+                  userHasPaid && !isCompleted && styles.paidStatusBadge
+                ]}>
+                  <Text style={[
+                    styles.paidBadgeText, 
+                    !isAccepted && !userHasPaid && styles.pendingBadgeText,
+                    isCompleted && styles.completedBadgeText,
+                    userHasPaid && !isCompleted && styles.paidStatusBadgeText
+                  ]}>
+                    {isCompleted ? 'Completed' : userHasPaid ? 'Paid' : isAccepted ? 'Accepted' : 'Pending'}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
+              </View>
             </View>
-            <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
           </View>
         </View>
       </TouchableOpacity>
@@ -302,28 +329,51 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6B7280',
   },
+  senderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginTop: 1,
+  },
+  senderText: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    fontWeight: '400',
+    lineHeight: 14,
+  },
   participantsText: {
     fontSize: 12,
     color: '#9CA3AF',
     marginTop: 2,
   },
   cardRight: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  cardRightContent: {
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  amountSection: {
+    alignItems: 'flex-end',
+  },
+  amountText: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+    lineHeight: 24,
+    marginBottom: 2,
+  },
+  statusSection: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-  },
-  amountText: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111827',
-    marginRight: 8,
   },
   paidBadge: {
     backgroundColor: '#D1FAE5',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
-    marginRight: 8,
   },
   paidBadgeText: {
     fontSize: 12,
