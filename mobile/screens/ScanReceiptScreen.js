@@ -332,7 +332,7 @@ export default function ScanReceiptScreen() {
               )}
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setImageUri(null)}>
-              <Text style={styles.reset}>Reset</Text>
+              <Text style={styles.reset}>Retake</Text>
             </TouchableOpacity>
           </>
         )}
