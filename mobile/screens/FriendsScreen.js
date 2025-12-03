@@ -112,8 +112,8 @@ export default function FriendsScreen() {
         const message = response.message || '';
         if (message.includes('pending')) {
           setError('Friend request pending');
-        } else {
-          setError('You are already friends with this user');
+      } else {
+        setError('You are already friends with this user');
         }
         setTimeout(() => {
           setEmail('');

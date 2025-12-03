@@ -759,14 +759,17 @@ export default function BillReview() {
                     >
                       <View style={styles.itemInfo}>
                         <View style={styles.itemNameRow}>
-                          <Text style={[styles.itemName, isPaid && styles.itemNamePaid]}>{item.name}</Text>
-                          {isPaid ? (
-                            <View style={styles.paidBadge}>
-                              <Ionicons name="checkmark-circle" size={16} color="#0d9488" />
-                              <Text style={styles.paidBadgeText}>Paid by {payerName || 'Someone'}</Text>
+                          <View style={styles.itemNameContainer}>
+                            <View style={styles.itemNameWithIcon}>
+                              {isPaid && (
+                                <Ionicons name="checkmark-circle" size={14} color="#0d9488" style={styles.paidIcon} />
+                              )}
+                              <Text style={[styles.itemName, isPaid && styles.itemNamePaid]}>{item.name}</Text>
                             </View>
-                          ) : (
-                            isFromActivity && (
+                            {isPaid && (
+                              <Text style={styles.paidByText}>Paid by {payerName || 'Someone'}</Text>
+                            )}
+                            {!isPaid && isFromActivity && (
                               <View style={[styles.claimBadge, isClaimed && styles.claimBadgeActive]}>
                                 <Ionicons 
                                   name={isClaimed ? "checkmark-circle" : "ellipse-outline"} 
@@ -777,8 +780,8 @@ export default function BillReview() {
                                   {isClaimed ? "Claimed" : "Tap to claim"}
                                 </Text>
                               </View>
-                            )
-                          )}
+                            )}
+                          </View>
                         </View>
                         {item.qty > 1 && (
                           <Text style={[styles.itemQty, isPaid && styles.itemQtyPaid]}>Qty: {item.qty}</Text>
@@ -1357,10 +1360,11 @@ const styles = StyleSheet.create({
     marginVertical: 2,
   },
   itemRowPaid: {
-    backgroundColor: '#ccfbf1',
+    backgroundColor: '#f0fdfa',
     borderRadius: 8,
     marginVertical: 2,
-    opacity: 0.8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#0d9488',
   },
   itemRowProcessing: {
     opacity: 0.6,
@@ -1371,20 +1375,23 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: spacing.xs,
   },
-  paidBadge: {
+  itemNameContainer: {
+    flex: 1,
+  },
+  itemNameWithIcon: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ccfbf1',
-    paddingHorizontal: spacing.xs,
-    paddingVertical: 2,
-    borderRadius: 12,
-    marginLeft: spacing.xs,
+    gap: 6,
   },
-  paidBadgeText: {
+  paidIcon: {
+    marginRight: 2,
+  },
+  paidByText: {
     fontSize: typography.sizes.xs,
-    color: '#0d9488',
-    fontWeight: '600',
-    marginLeft: 4,
+    color: '#14b8a6',
+    fontWeight: '500',
+    marginTop: 2,
+    marginLeft: 20, // Align with item name (icon width + gap)
   },
   claimBadge: {
     flexDirection: 'row',
