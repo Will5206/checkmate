@@ -442,6 +442,11 @@ public class ReceiptController {
                         receiptJson.put("paidAmount", 0.0f);
                     }
                     
+                    // CRITICAL FIX: Get complete status from database and include in response
+                    // Frontend will filter out receipts with complete = true
+                    boolean isComplete = receiptDAO.isReceiptComplete(receipt.getReceiptId());
+                    receiptJson.put("complete", isComplete);
+                    
                     receiptsArray.put(receiptJson);
                 }
                 
@@ -1216,14 +1221,13 @@ public class ReceiptController {
                     // Don't fail payment if transaction record fails - balances are already updated
                 }
                 
-                // Record payment in receipt_participants
-                boolean paymentRecorded = false;
-                try {
-                    paymentRecorded = receiptDAO.recordPayment(receiptId, userIdStr, remainingAmount);
-                } catch (Exception recordError) {
-                    System.err.println("Warning: Failed to record payment in receipt_participants: " + recordError.getMessage());
-                    // If payment recording fails, we need to rollback since balances are updated but payment isn't recorded
-                    // This could lead to inconsistent state
+                // CRITICAL FIX: Record payment and mark items in a single atomic transaction
+                // This ensures data consistency - either both operations succeed or both fail
+                int itemsMarkedPaid = receiptDAO.recordPaymentAndMarkItems(receiptId, userIdStr, remainingAmount);
+                
+                if (itemsMarkedPaid < 0) {
+                    // Payment recording failed - rollback balance operations
+                    System.err.println("CRITICAL: Payment recording failed, rolling back balance operations");
                     try {
                         // Refund payer
                         balanceService.addToBalance(
@@ -1254,9 +1258,7 @@ public class ReceiptController {
                     return;
                 }
                 
-                // Mark all items assigned to this user as paid
-                int itemsMarkedPaid = receiptDAO.markItemsAsPaid(receiptId, userIdStr);
-                System.out.println("Marked " + itemsMarkedPaid + " item assignments as paid for user " + userIdStr);
+                System.out.println("[ReceiptController] Successfully recorded payment and marked " + itemsMarkedPaid + " items as paid");
                 
                 // Check if receipt should be marked as completed
                 boolean isCompleted = receiptDAO.checkAndMarkReceiptCompleted(receiptId);

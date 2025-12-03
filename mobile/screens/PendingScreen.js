@@ -45,8 +45,18 @@ export default function PendingScreen() {
       
       if (response.success) {
         const receiptsList = response.receipts || [];
-        console.log('PendingScreen: Setting receipts, count:', receiptsList.length);
-        setReceipts(receiptsList);
+        // CRITICAL FIX: Filter out receipts with complete = true (or 1)
+        // These receipts should only appear in History, not Pending
+        const incompleteReceipts = receiptsList.filter(receipt => {
+          // Filter out receipts where complete is true, 1, or any truthy value
+          const isComplete = receipt.complete === true || receipt.complete === 1 || receipt.complete === '1';
+          if (isComplete) {
+            console.log('PendingScreen: Filtering out complete receipt:', receipt.receiptId);
+          }
+          return !isComplete;
+        });
+        console.log('PendingScreen: Setting receipts, count:', incompleteReceipts.length, '(filtered from', receiptsList.length, 'total)');
+        setReceipts(incompleteReceipts);
       } else {
         console.error('Failed to load pending receipts:', response.message);
         Alert.alert('Error', response.message || 'Failed to load pending receipts');

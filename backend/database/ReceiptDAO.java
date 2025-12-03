@@ -10,6 +10,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Data Access Object for managing receipts in the database.
@@ -18,6 +20,8 @@ import java.util.Set;
 public class ReceiptDAO {
 
     private final DatabaseConnection dbConnection;
+    // Thread pool for async operations (prevents thread exhaustion)
+    private static final ExecutorService asyncUpdateExecutor = Executors.newFixedThreadPool(5);
 
     /**
      * Constructor that gets the database connection instance
@@ -191,117 +195,226 @@ public class ReceiptDAO {
         return 0;
     }
 
+    /**
+     * Assign an item to a user (claim an item) with proper transaction and locking to prevent race conditions.
+     * Uses SELECT FOR UPDATE to lock the item row and ensure atomic validation and update.
+     * 
+     * @param itemId The item ID
+     * @param userId The user ID (VARCHAR(36))
+     * @param quantity The quantity to claim
+     * @return true if assignment was successful, false otherwise
+     */
     public boolean assignItemToUser(int itemId, String userId, int quantity) {
-        // First get receipt_id and item quantity from item
-        String getItemSql = "SELECT receipt_id, quantity as item_quantity FROM receipt_items WHERE item_id = ?";
-        int receiptId = -1;
-        int itemQuantity = 0;
-        
-        try (Connection conn = dbConnection.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(getItemSql)) {
-            pstmt.setInt(1, itemId);
-            try (ResultSet rs = pstmt.executeQuery()) {
-                if (rs.next()) {
-                    receiptId = rs.getInt("receipt_id");
-                    itemQuantity = rs.getInt("item_quantity");
+        Connection conn = null;
+        try {
+            conn = dbConnection.getConnection();
+            conn.setAutoCommit(false); // Start transaction
+            
+            // CRITICAL FIX: Use SELECT FOR UPDATE to lock the item row and prevent race conditions
+            // This ensures only one user can claim items at a time for the same item
+            String getItemSql = "SELECT receipt_id, quantity as item_quantity " +
+                               "FROM receipt_items " +
+                               "WHERE item_id = ? FOR UPDATE";
+            
+            int receiptId = -1;
+            int itemQuantity = 0;
+            
+            try (PreparedStatement pstmt = conn.prepareStatement(getItemSql)) {
+                pstmt.setInt(1, itemId);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    if (rs.next()) {
+                        receiptId = rs.getInt("receipt_id");
+                        itemQuantity = rs.getInt("item_quantity");
+                    } else {
+                        System.err.println("Item not found: " + itemId);
+                        conn.rollback();
+                        return false;
+                    }
+                }
+            }
+            
+            // Get current user's claimed quantity (within same transaction)
+            int userCurrentQty = 0;
+            String getUserQtySql = "SELECT COALESCE(SUM(quantity), 0) as user_qty " +
+                                  "FROM item_assignments " +
+                                  "WHERE item_id = ? AND user_id = ?";
+            try (PreparedStatement pstmt = conn.prepareStatement(getUserQtySql)) {
+                pstmt.setInt(1, itemId);
+                pstmt.setString(2, userId);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    if (rs.next()) {
+                        userCurrentQty = rs.getInt("user_qty");
+                    }
+                }
+            }
+            
+            // Get total claimed quantity by all users (within same transaction)
+            int totalClaimed = 0;
+            String getTotalQtySql = "SELECT COALESCE(SUM(quantity), 0) as total_qty " +
+                                   "FROM item_assignments " +
+                                   "WHERE item_id = ?";
+            try (PreparedStatement pstmt = conn.prepareStatement(getTotalQtySql)) {
+                pstmt.setInt(1, itemId);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    if (rs.next()) {
+                        totalClaimed = rs.getInt("total_qty");
+                    }
+                }
+            }
+            
+            // Calculate total claimed by others (excluding this user's current claim)
+            int totalClaimedByOthers = totalClaimed - userCurrentQty;
+            
+            // Validate: new total claimed cannot exceed item quantity
+            int newTotalClaimed = totalClaimedByOthers + quantity;
+            if (newTotalClaimed > itemQuantity) {
+                System.err.println("Cannot claim " + quantity + " of item " + itemId + 
+                                 ". Item has quantity " + itemQuantity + 
+                                 ", already claimed: " + totalClaimedByOthers + 
+                                 " by others, user currently has: " + userCurrentQty);
+                conn.rollback();
+                return false; // Validation failed
+            }
+            
+            // Insert or update assignment (within same transaction)
+            String sql = "INSERT INTO item_assignments (receipt_id, item_id, user_id, quantity) " +
+                         "VALUES (?, ?, ?, ?) " +
+                         "ON DUPLICATE KEY UPDATE quantity = ?";
+            
+            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                pstmt.setInt(1, receiptId);
+                pstmt.setInt(2, itemId);
+                pstmt.setString(3, userId);
+                pstmt.setInt(4, quantity);
+                pstmt.setInt(5, quantity);
+                
+                int affectedRows = pstmt.executeUpdate();
+                if (affectedRows > 0) {
+                    // Commit transaction before async update
+                    conn.commit();
+                    
+                    // Update receipt complete status asynchronously (after commit)
+                    // This improves response time for the user
+                    final int finalReceiptId = receiptId;
+                    updateReceiptCompleteStatusAsync(finalReceiptId);
+                    
+                    return true;
                 } else {
-                    System.err.println("Item not found: " + itemId);
+                    conn.rollback();
                     return false;
                 }
             }
         } catch (SQLException e) {
-            System.err.println("Error getting item info: " + e.getMessage());
-            return false;
-        }
-        
-        // Get current user's claimed quantity
-        int userCurrentQty = getUserClaimedQuantity(itemId, userId);
-        // Get total claimed quantity by all users (excluding this user's current claim)
-        int totalClaimedByOthers = getTotalClaimedQuantity(itemId) - userCurrentQty;
-        
-        // Validate: new total claimed cannot exceed item quantity
-        int newTotalClaimed = totalClaimedByOthers + quantity;
-        if (newTotalClaimed > itemQuantity) {
-            System.err.println("Cannot claim " + quantity + " of item " + itemId + 
-                             ". Item has quantity " + itemQuantity + 
-                             ", already claimed: " + totalClaimedByOthers + 
-                             " by others, user currently has: " + userCurrentQty);
-            return false; // Validation failed
-        }
-        
-        // Insert or update assignment
-        String sql = "INSERT INTO item_assignments (receipt_id, item_id, user_id, quantity) " +
-                     "VALUES (?, ?, ?, ?) " +
-                     "ON DUPLICATE KEY UPDATE quantity = ?";
-        
-        try (Connection conn = dbConnection.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            pstmt.setInt(1, receiptId);
-            pstmt.setInt(2, itemId);
-            pstmt.setString(3, userId);
-            pstmt.setInt(4, quantity);
-            pstmt.setInt(5, quantity);
-            
-            int affectedRows = pstmt.executeUpdate();
-            if (affectedRows > 0) {
-                // Update receipt complete status after item assignment
-                updateReceiptCompleteStatus(receiptId);
-                return true;
-            }
-            return false;
-        } catch (SQLException e) {
             System.err.println("Error assigning item to user: " + e.getMessage());
             e.printStackTrace();
+            if (conn != null) {
+                try {
+                    conn.rollback();
+                } catch (SQLException rollbackEx) {
+                    System.err.println("Error rolling back transaction: " + rollbackEx.getMessage());
+                }
+            }
             return false;
+        } finally {
+            if (conn != null) {
+                try {
+                    conn.setAutoCommit(true); // Reset auto-commit
+                } catch (SQLException e) {
+                    System.err.println("Error resetting auto-commit: " + e.getMessage());
+                }
+            }
         }
     }
 
     /**
-     * Unassign an item from a user (unclaim an item).
+     * Unassign an item from a user (unclaim an item) with proper transaction handling.
      * 
      * @param itemId The item ID
      * @param userId The user ID (VARCHAR(36))
      * @return true if unassignment was successful, false otherwise
      */
     public boolean unassignItemFromUser(int itemId, String userId) {
-        // First get receipt_id before deleting
-        String getReceiptSql = "SELECT receipt_id FROM item_assignments WHERE item_id = ? AND user_id = ? LIMIT 1";
+        Connection conn = null;
         int receiptId = -1;
         
-        try (Connection conn = dbConnection.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(getReceiptSql)) {
-            pstmt.setInt(1, itemId);
-            pstmt.setString(2, userId);
-            try (ResultSet rs = pstmt.executeQuery()) {
-                if (rs.next()) {
-                    receiptId = rs.getInt("receipt_id");
-                }
-            }
-        } catch (SQLException e) {
-            System.err.println("Error getting receipt_id for unassign: " + e.getMessage());
-        }
-        
-        String sql = "DELETE FROM item_assignments WHERE item_id = ? AND user_id = ?";
-        
-        try (Connection conn = dbConnection.getConnection();
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
-            pstmt.setInt(1, itemId);
-            pstmt.setString(2, userId);
+        try {
+            conn = dbConnection.getConnection();
+            conn.setAutoCommit(false); // Start transaction
             
-            int affectedRows = pstmt.executeUpdate();
-            if (affectedRows > 0) {
-                // Update receipt complete status after item unassignment
-                if (receiptId > 0) {
-                    updateReceiptCompleteStatus(receiptId);
+            // Get receipt_id before deleting (within transaction with lock)
+            String getReceiptSql = "SELECT receipt_id FROM item_assignments WHERE item_id = ? AND user_id = ? LIMIT 1 FOR UPDATE";
+            try (PreparedStatement pstmt = conn.prepareStatement(getReceiptSql)) {
+                pstmt.setInt(1, itemId);
+                pstmt.setString(2, userId);
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    if (rs.next()) {
+                        receiptId = rs.getInt("receipt_id");
+                    } else {
+                        // No assignment found
+                        conn.rollback();
+                        return false;
+                    }
                 }
-                return true;
             }
-            return false;
+            
+            // Delete assignment (within transaction)
+            String sql = "DELETE FROM item_assignments WHERE item_id = ? AND user_id = ?";
+            try (PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                pstmt.setInt(1, itemId);
+                pstmt.setString(2, userId);
+                
+                int affectedRows = pstmt.executeUpdate();
+                if (affectedRows > 0) {
+                    conn.commit();
+                    
+                    // Update receipt complete status asynchronously (after commit)
+                    if (receiptId > 0) {
+                        updateReceiptCompleteStatusAsync(receiptId);
+                    }
+                    return true;
+                } else {
+                    conn.rollback();
+                    return false;
+                }
+            }
         } catch (SQLException e) {
             System.err.println("Error unassigning item from user: " + e.getMessage());
             e.printStackTrace();
+            if (conn != null) {
+                try {
+                    conn.rollback();
+                } catch (SQLException rollbackEx) {
+                    System.err.println("Error rolling back transaction: " + rollbackEx.getMessage());
+                }
+            }
             return false;
+        } finally {
+            if (conn != null) {
+                try {
+                    conn.setAutoCommit(true); // Reset auto-commit
+                } catch (SQLException e) {
+                    System.err.println("Error resetting auto-commit: " + e.getMessage());
+                }
+            }
         }
+    }
+    
+    /**
+     * Helper method to update receipt complete status asynchronously using thread pool.
+     * Prevents thread exhaustion and provides better error handling.
+     * 
+     * @param receiptId The receipt ID to update
+     */
+    private void updateReceiptCompleteStatusAsync(int receiptId) {
+        asyncUpdateExecutor.submit(() -> {
+            try {
+                updateReceiptCompleteStatus(receiptId);
+            } catch (Exception e) {
+                System.err.println("[ReceiptDAO] Error updating receipt complete status in background for receipt " + receiptId + ": " + e.getMessage());
+                e.printStackTrace();
+                // TODO: In production, add retry logic or alerting here
+            }
+        });
     }
 
     /**
@@ -417,9 +530,10 @@ public class ReceiptDAO {
     public int markItemsAsPaid(int receiptId, String userId) {
         // Mark items in receipt_items table where the user has claimed them
         // Only mark items that aren't already paid
+        // CRITICAL FIX: Set both paid_by AND paid_for when item is paid
         String sql = "UPDATE receipt_items ri " +
                      "INNER JOIN item_assignments ia ON ri.item_id = ia.item_id " +
-                     "SET ri.paid_by = ?, ri.paid_at = CURRENT_TIMESTAMP " +
+                     "SET ri.paid_by = ?, ri.paid_at = CURRENT_TIMESTAMP, ri.paid_for = 1 " +
                      "WHERE ri.receipt_id = ? AND ia.user_id = ? AND ri.paid_by IS NULL";
         
         try (Connection conn = dbConnection.getConnection();
@@ -535,84 +649,115 @@ public class ReceiptDAO {
     }
 
     /**
-     * Calculate the total amount owed by a user for a receipt based on their item assignments.
+     * OPTIMIZED: Calculate the total amount owed by a user for a receipt using a single SQL query.
+     * Uses BigDecimal internally for precision, then converts to float for compatibility.
      * 
      * @param receiptId The receipt ID
      * @param userId The user ID (VARCHAR(36))
      * @return The total amount owed (items + proportional tax/tip), or 0 if no items assigned
      */
     public float calculateUserOwedAmount(int receiptId, String userId) {
-        // Get all items for this receipt
-        List<ReceiptItem> allItems = getReceiptItems(receiptId);
-        if (allItems.isEmpty()) {
-            return 0.0f;
-        }
+        // OPTIMIZATION FIX: Single SQL query instead of multiple queries and Java loops
+        // This calculates everything in the database for better performance and accuracy
+        String sql = "SELECT " +
+                     "  COALESCE(SUM(ri.price * ia.quantity), 0) as assigned_subtotal, " +
+                     "  COALESCE(SUM(ri.price * ri.quantity), 0) as total_subtotal, " +
+                     "  r.tax_amount, " +
+                     "  r.tip_amount " +
+                     "FROM receipt_items ri " +
+                     "LEFT JOIN item_assignments ia ON ri.item_id = ia.item_id AND ia.user_id = ? " +
+                     "INNER JOIN receipts r ON ri.receipt_id = r.receipt_id " +
+                     "WHERE ri.receipt_id = ?";
         
-        // Get user's item assignments
-        Map<Integer, Integer> assignments = getItemAssignmentsForUser(receiptId, userId);
-        if (assignments.isEmpty()) {
-            return 0.0f;
-        }
-        
-        // Calculate subtotal from assigned items
-        float assignedSubtotal = 0.0f;
-        float totalSubtotal = 0.0f;
-        
-        for (ReceiptItem item : allItems) {
-            float itemTotal = item.getPrice() * item.getQuantity();
-            totalSubtotal += itemTotal;
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
             
-            Integer assignedQty = assignments.get(item.getItemId());
-            if (assignedQty != null && assignedQty > 0) {
-                // Calculate proportional cost for assigned quantity
-                float itemPricePerUnit = item.getPrice();
-                assignedSubtotal += itemPricePerUnit * assignedQty;
+            pstmt.setString(1, userId);
+            pstmt.setInt(2, receiptId);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    // Use BigDecimal for precise calculations
+                    java.math.BigDecimal assignedSubtotal = rs.getBigDecimal("assigned_subtotal");
+                    java.math.BigDecimal totalSubtotal = rs.getBigDecimal("total_subtotal");
+                    java.math.BigDecimal taxAmount = rs.getBigDecimal("tax_amount");
+                    java.math.BigDecimal tipAmount = rs.getBigDecimal("tip_amount");
+                    
+                    // Check if user has any assigned items
+                    if (assignedSubtotal == null || assignedSubtotal.compareTo(java.math.BigDecimal.ZERO) == 0) {
+                        return 0.0f;
+                    }
+                    
+                    if (totalSubtotal == null || totalSubtotal.compareTo(java.math.BigDecimal.ZERO) == 0) {
+                        return 0.0f;
+                    }
+                    
+                    // Calculate proportion using BigDecimal for precision
+                    java.math.BigDecimal proportion = assignedSubtotal.divide(
+                        totalSubtotal, 
+                        10, // 10 decimal places for intermediate calculation
+                        java.math.RoundingMode.HALF_UP
+                    );
+                    
+                    // Calculate proportional tax and tip
+                    java.math.BigDecimal assignedTax = (taxAmount != null ? taxAmount : java.math.BigDecimal.ZERO)
+                        .multiply(proportion)
+                        .setScale(2, java.math.RoundingMode.HALF_UP);
+                    
+                    java.math.BigDecimal assignedTip = (tipAmount != null ? tipAmount : java.math.BigDecimal.ZERO)
+                        .multiply(proportion)
+                        .setScale(2, java.math.RoundingMode.HALF_UP);
+                    
+                    // Calculate total and round to 2 decimal places
+                    java.math.BigDecimal total = assignedSubtotal
+                        .add(assignedTax)
+                        .add(assignedTip)
+                        .setScale(2, java.math.RoundingMode.HALF_UP);
+                    
+                    // Convert to float for backward compatibility (models use float)
+                    return total.floatValue();
+                }
             }
+        } catch (SQLException e) {
+            System.err.println("Error calculating user owed amount: " + e.getMessage());
+            e.printStackTrace();
         }
         
-        if (totalSubtotal == 0) {
-            return 0.0f;
-        }
-        
-        // Get receipt for tax and tip
-        Receipt receipt = getReceiptById(receiptId);
-        if (receipt == null) {
-            return assignedSubtotal;
-        }
-        
-        // Calculate proportional tax and tip
-        float taxAmount = receipt.getTaxAmount();
-        float tipAmount = receipt.getTipAmount();
-        float proportion = assignedSubtotal / totalSubtotal;
-        
-        float assignedTax = taxAmount * proportion;
-        float assignedTip = tipAmount * proportion;
-        
-        return assignedSubtotal + assignedTax + assignedTip;
+        return 0.0f;
     }
 
     /**
      * Get all pending receipts for a specific user.
-     * A receipt is pending for a user if they are a participant with status 'pending' or 'accepted' 
-     * AND the receipt status is not 'completed'.
+     * 
+     * CRITICAL: This method uses ONLY the 'complete' column to determine if a receipt is pending.
+     * - Pending: complete = 0 (FALSE) - receipt is not yet complete (items not all paid for)
+     * - History: complete = 1 (TRUE) - receipt is complete (all items paid for)
+     * 
+     * The 'receipts.status' column is NOT used for this determination.
+     * 
+     * A receipt is pending for a user if:
+     * 1. User is the uploader AND complete = 0, OR
+     * 2. User is a participant (receipt_participants.status = 'pending' or 'accepted', not 'declined') AND complete = 0
+     * 
      * This includes receipts uploaded by the user - they should see their own receipts in Pending 
-     * until everyone has paid and the receipt moves to History.
+     * until all items are paid for (complete = 1) and the receipt moves to History.
      * 
      * @param userId The user's ID (VARCHAR(36))
-     * @return List of Receipt objects
+     * @return List of Receipt objects where complete = 0
      */
     public List<Receipt> getPendingReceiptsForUser(String userId) {
         // Get receipts where:
         // 1. User is the uploader, OR
-        // 2. User is a participant with status 'pending' or 'accepted' (not declined)
-        // AND complete = FALSE (receipt not yet complete)
-        // Receipts with complete = TRUE appear in History, not Pending
+        // 2. User is a participant with receipt_participants.status 'pending' or 'accepted' (not declined)
+        // AND complete = 0 (receipt not yet complete - items not all paid for)
+        // Receipts with complete = 1 appear in History, not Pending
+        // NOTE: We check receipt_participants.status (participant invitation status), NOT receipts.status
         String sql = "SELECT DISTINCT r.* FROM (" +
-                     "  SELECT r.* FROM receipts r WHERE r.uploaded_by = ? AND r.complete = FALSE " +
+                     "  SELECT r.* FROM receipts r WHERE r.uploaded_by = ? AND r.complete = 0 " +
                      "  UNION " +
                      "  SELECT r.* FROM receipts r " +
                      "  INNER JOIN receipt_participants rp ON r.receipt_id = rp.receipt_id " +
-                     "  WHERE rp.user_id = ? AND rp.status IN ('pending', 'accepted') AND r.complete = FALSE" +
+                     "  WHERE rp.user_id = ? AND rp.status IN ('pending', 'accepted') AND r.complete = 0" +
                      ") AS r " +
                      "ORDER BY r.created_at DESC";
         
@@ -646,25 +791,33 @@ public class ReceiptDAO {
 
     /**
      * Get all receipts for a specific user (History/Activity - completed receipts only).
-     * Shows receipts where complete = TRUE and the user is either the uploader or a participant.
-     * Excludes receipts where the user has declined.
+     * 
+     * CRITICAL: This method uses ONLY the 'complete' column to determine if a receipt is in history.
+     * - History: complete = 1 (TRUE) - receipt is complete (all items paid for)
+     * - Pending: complete = 0 (FALSE) - receipt is not yet complete (items not all paid for)
+     * 
+     * The 'receipts.status' column is NOT used for this determination.
+     * 
+     * Shows receipts where complete = 1 and the user is either the uploader or a participant.
+     * Excludes receipts where the user has declined (receipt_participants.status = 'declined').
      * 
      * @param userId The user's ID (VARCHAR(36))
-     * @return List of Receipt objects
+     * @return List of Receipt objects where complete = 1
      */
     public List<Receipt> getAllReceiptsForUser(String userId) {
         System.out.println("[ReceiptDAO] STEP C1: getAllReceiptsForUser called for userId: " + userId);
         // Show all receipts where:
         // 1. User is the uploader (r.uploaded_by = ?), OR
         // 2. User is a participant and hasn't declined (rp.user_id = ? AND rp.status != 'declined')
-        // AND complete = TRUE (receipt is completed)
+        // AND complete = 1 (receipt is completed - all items paid for)
+        // NOTE: We check receipt_participants.status (participant invitation status), NOT receipts.status
         // Use UNION to avoid duplicate rows from JOIN
         String sql = "SELECT DISTINCT r.* FROM (" +
-                     "  SELECT r.* FROM receipts r WHERE r.uploaded_by = ? AND r.complete = TRUE " +
+                     "  SELECT r.* FROM receipts r WHERE r.uploaded_by = ? AND r.complete = 1 " +
                      "  UNION " +
                      "  SELECT r.* FROM receipts r " +
                      "  INNER JOIN receipt_participants rp ON r.receipt_id = rp.receipt_id " +
-                     "  WHERE rp.user_id = ? AND rp.status != 'declined' AND r.complete = TRUE" +
+                     "  WHERE rp.user_id = ? AND rp.status != 'declined' AND r.complete = 1" +
                      ") AS r " +
                      "ORDER BY r.created_at DESC";
         
@@ -1055,6 +1208,14 @@ public class ReceiptDAO {
      * @param amount The amount being paid
      * @return true if payment was recorded successfully
      */
+    /**
+     * Record payment in receipt_participants table.
+     * 
+     * @param receiptId The receipt ID
+     * @param userId The user ID who paid
+     * @param amount The amount paid
+     * @return true if payment was recorded successfully
+     */
     public boolean recordPayment(int receiptId, String userId, float amount) {
         String sql = "UPDATE receipt_participants " +
                      "SET paid_amount = COALESCE(paid_amount, 0) + ?, paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP " +
@@ -1076,6 +1237,89 @@ public class ReceiptDAO {
         }
 
         return false;
+    }
+    
+    /**
+     * CRITICAL FIX: Record payment and mark items as paid in a single transaction.
+     * This ensures atomicity - either both operations succeed or both fail.
+     * 
+     * @param receiptId The receipt ID
+     * @param userId The user ID who paid
+     * @param amount The amount paid
+     * @return Number of items marked as paid, or -1 if transaction failed
+     */
+    public int recordPaymentAndMarkItems(int receiptId, String userId, double amount) {
+        Connection conn = null;
+        try {
+            conn = dbConnection.getConnection();
+            conn.setAutoCommit(false); // Start transaction
+            
+            // Step 1: Record payment in receipt_participants
+            String paymentSql = "UPDATE receipt_participants " +
+                               "SET paid_amount = COALESCE(paid_amount, 0) + ?, paid_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP " +
+                               "WHERE receipt_id = ? AND user_id = ?";
+            
+            try (PreparedStatement pstmt = conn.prepareStatement(paymentSql)) {
+                pstmt.setBigDecimal(1, java.math.BigDecimal.valueOf(amount));
+                pstmt.setInt(2, receiptId);
+                pstmt.setString(3, userId);
+                
+                int paymentRows = pstmt.executeUpdate();
+                if (paymentRows == 0) {
+                    conn.rollback();
+                    System.err.println("Failed to record payment: participant not found for receipt " + receiptId + ", user " + userId);
+                    return -1;
+                }
+            }
+            
+            // Step 2: Mark items as paid in receipt_items
+            // CRITICAL FIX: Set both paid_by AND paid_for when item is paid
+            // paid_for = 1 means the item has been paid for
+            String itemsSql = "UPDATE receipt_items ri " +
+                            "INNER JOIN item_assignments ia ON ri.item_id = ia.item_id " +
+                            "SET ri.paid_by = ?, ri.paid_at = CURRENT_TIMESTAMP, ri.paid_for = 1 " +
+                            "WHERE ri.receipt_id = ? AND ia.user_id = ? AND ri.paid_by IS NULL";
+            
+            int itemsMarked = 0;
+            try (PreparedStatement pstmt = conn.prepareStatement(itemsSql)) {
+                pstmt.setString(1, userId);
+                pstmt.setInt(2, receiptId);
+                pstmt.setString(3, userId);
+                
+                itemsMarked = pstmt.executeUpdate();
+            }
+            
+            // Commit transaction
+            conn.commit();
+            System.out.println("[ReceiptDAO] Successfully recorded payment and marked " + itemsMarked + " items as paid in single transaction");
+            
+            // CRITICAL FIX: After marking items as paid, check if all items are now paid for
+            // and update the receipt's complete status accordingly
+            // This ensures receipt moves to History when all items are paid
+            updateReceiptCompleteStatusAsync(receiptId);
+            
+            return itemsMarked;
+            
+        } catch (SQLException e) {
+            System.err.println("[ReceiptDAO] ERROR: Failed to record payment and mark items in transaction: " + e.getMessage());
+            e.printStackTrace();
+            if (conn != null) {
+                try {
+                    conn.rollback();
+                } catch (SQLException rollbackEx) {
+                    System.err.println("Error rolling back payment transaction: " + rollbackEx.getMessage());
+                }
+            }
+            return -1;
+        } finally {
+            if (conn != null) {
+                try {
+                    conn.setAutoCommit(true); // Reset auto-commit
+                } catch (SQLException e) {
+                    System.err.println("Error resetting auto-commit: " + e.getMessage());
+                }
+            }
+        }
     }
 
     /**
@@ -1145,36 +1389,180 @@ public class ReceiptDAO {
     }
 
     /**
-     * Update the complete status of a receipt based on whether all items are claimed.
-     * Sets complete = TRUE if all items are claimed, FALSE otherwise.
+     * CRITICAL FIX: Update the complete status of a receipt based on ALL items being paid for.
+     * A receipt is complete when ALL items have paid_for = 1 (or paid_by IS NOT NULL).
      * 
      * @param receiptId The receipt ID
-     * @return true if receipt is now complete, false otherwise
+     * @return true if receipt is now complete (all items paid for), false otherwise
      */
     public boolean updateReceiptCompleteStatus(int receiptId) {
-        boolean allClaimed = areAllItemsClaimed(receiptId);
+        System.out.println("[ReceiptDAO] updateReceiptCompleteStatus called for receipt " + receiptId);
         
+        // Check if all items are paid for (paid_for = 1 or paid_by IS NOT NULL)
+        boolean allItemsPaid = areAllItemsPaidFor(receiptId);
+        System.out.println("[ReceiptDAO] areAllItemsPaidFor returned: " + allItemsPaid + " for receipt " + receiptId);
+        
+        // Receipt is complete only if ALL items are paid for
+        updateCompleteStatusInDB(receiptId, allItemsPaid);
+        
+        return allItemsPaid;
+    }
+    
+    /**
+     * Check if all items in a receipt are paid for.
+     * An item is paid for if paid_for = 1 OR paid_by IS NOT NULL.
+     * 
+     * @param receiptId The receipt ID
+     * @return true if all items are paid for, false otherwise
+     */
+    private boolean areAllItemsPaidFor(int receiptId) {
+        String sql = "SELECT " +
+                     "  COUNT(*) as total_items, " +
+                     "  SUM(CASE WHEN paid_for = 1 OR paid_by IS NOT NULL THEN 1 ELSE 0 END) as paid_items " +
+                     "FROM receipt_items " +
+                     "WHERE receipt_id = ?";
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, receiptId);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    int totalItems = rs.getInt("total_items");
+                    int paidItems = rs.getInt("paid_items");
+                    
+                    System.out.println("[ReceiptDAO] Receipt " + receiptId + ": " + paidItems + "/" + totalItems + " items are paid for");
+                    
+                    if (totalItems == 0) {
+                        System.out.println("[ReceiptDAO] Receipt " + receiptId + " has no items - not complete");
+                        return false;
+                    }
+                    
+                    boolean allPaid = (paidItems == totalItems);
+                    if (allPaid) {
+                        System.out.println("[ReceiptDAO] Receipt " + receiptId + ": ALL " + totalItems + " items are paid for - can move to History");
+                    } else {
+                        System.out.println("[ReceiptDAO] Receipt " + receiptId + ": " + (totalItems - paidItems) + " items still need to be paid for");
+                    }
+                    
+                    return allPaid;
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[ReceiptDAO] ERROR: Error checking if all items paid for: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Helper method to check if all participants have paid their full amount.
+     * 
+     * @param receiptId The receipt ID
+     * @return true if all participants have paid, false otherwise
+     */
+    private boolean areAllParticipantsPaid(int receiptId) {
+        List<Map<String, Object>> participants = getParticipantsWithPaymentStatus(receiptId);
+        
+        // CRITICAL FIX: If no participants exist, it means only the uploader is involved
+        // The uploader doesn't need to pay, so if all items are claimed and no participants exist,
+        // the receipt is complete (uploader already "paid" by uploading the receipt)
+        if (participants.isEmpty()) {
+            System.out.println("[ReceiptDAO] No participants found for receipt " + receiptId + " - checking if uploader has all items claimed");
+            // If there are no participants, the receipt is complete if all items are claimed
+            // (uploader doesn't need to pay, they already "paid" by uploading)
+            return areAllItemsClaimed(receiptId);
+        }
+        
+        // Check if all participants have paid their full amount
+        // Use BigDecimal for precise comparison to avoid floating-point errors
+        java.math.BigDecimal roundingTolerance = new java.math.BigDecimal("0.01");
+        for (Map<String, Object> participant : participants) {
+            float paidAmountFloat = (Float) participant.get("paid_amount");
+            float owedAmountFloat = (Float) participant.get("owed_amount");
+            
+            // Convert to BigDecimal for precise comparison
+            java.math.BigDecimal paidAmount = java.math.BigDecimal.valueOf(paidAmountFloat).setScale(2, java.math.RoundingMode.HALF_UP);
+            java.math.BigDecimal owedAmount = java.math.BigDecimal.valueOf(owedAmountFloat).setScale(2, java.math.RoundingMode.HALF_UP);
+            
+            // Allow small rounding differences (0.01)
+            if (paidAmount.compareTo(owedAmount.subtract(roundingTolerance)) < 0) {
+                System.out.println("[ReceiptDAO] Participant " + participant.get("user_id") + " has not paid fully: paid=" + paidAmount + ", owed=" + owedAmount);
+                return false;
+            }
+        }
+        
+        System.out.println("[ReceiptDAO] All " + participants.size() + " participants have paid their full amount");
+        return true;
+    }
+    
+    /**
+     * Helper method to update the complete status in the database.
+     * 
+     * @param receiptId The receipt ID
+     * @param isComplete Whether the receipt is complete
+     */
+    private void updateCompleteStatusInDB(int receiptId, boolean isComplete) {
         String sql = "UPDATE receipts SET complete = ? WHERE receipt_id = ?";
         
         try (Connection conn = dbConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             
-            pstmt.setBoolean(1, allClaimed);
+            pstmt.setBoolean(1, isComplete);
             pstmt.setInt(2, receiptId);
             
             int affectedRows = pstmt.executeUpdate();
             if (affectedRows > 0) {
-                System.out.println("[ReceiptDAO] Updated receipt " + receiptId + " complete status to " + allClaimed);
-                return allClaimed;
+                System.out.println("[ReceiptDAO] SUCCESS: Updated receipt " + receiptId + " complete status to " + isComplete + " (affected rows: " + affectedRows + ")");
+                
+                // Verify the update by querying the database
+                String verifySql = "SELECT complete FROM receipts WHERE receipt_id = ?";
+                try (PreparedStatement verifyPstmt = conn.prepareStatement(verifySql)) {
+                    verifyPstmt.setInt(1, receiptId);
+                    try (ResultSet verifyRs = verifyPstmt.executeQuery()) {
+                        if (verifyRs.next()) {
+                            boolean actualComplete = verifyRs.getBoolean("complete");
+                            System.out.println("[ReceiptDAO] VERIFIED: Receipt " + receiptId + " complete status in DB is now: " + actualComplete);
+                        }
+                    }
+                }
+            } else {
+                System.out.println("[ReceiptDAO] WARNING: No rows affected when updating receipt " + receiptId + " complete status");
             }
         } catch (SQLException e) {
-            System.err.println("Error updating receipt complete status: " + e.getMessage());
+            System.err.println("[ReceiptDAO] ERROR: Error updating receipt complete status: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Check if a receipt is marked as complete in the database.
+     * 
+     * @param receiptId The receipt ID
+     * @return true if receipt.complete = 1, false otherwise
+     */
+    public boolean isReceiptComplete(int receiptId) {
+        String sql = "SELECT complete FROM receipts WHERE receipt_id = ?";
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, receiptId);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getBoolean("complete");
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[ReceiptDAO] ERROR: Error checking receipt complete status: " + e.getMessage());
             e.printStackTrace();
         }
         
-        return false;
+        return false; // Default to false if error or not found
     }
-
+    
     /**
      * Check if all items in a receipt are claimed by users.
      * Counts all item assignments (including paid items) to determine if all items are claimed.
@@ -1182,47 +1570,62 @@ public class ReceiptDAO {
      * @param receiptId The receipt ID
      * @return true if all items are fully claimed, false otherwise
      */
+    /**
+     * Check if all items in a receipt are claimed by users.
+     * OPTIMIZED: Uses single JOIN query instead of N+1 queries for better performance.
+     * 
+     * @param receiptId The receipt ID
+     * @return true if all items are fully claimed, false otherwise
+     */
     public boolean areAllItemsClaimed(int receiptId) {
-        // Get all items for this receipt
-        List<ReceiptItem> items = getReceiptItems(receiptId);
-        if (items.isEmpty()) {
-            // No items means not all claimed - receipt should stay in Pending
-            System.out.println("[ReceiptDAO] Receipt " + receiptId + " has no items - not all claimed (stays in Pending)");
-            return false;
-        }
+        // OPTIMIZATION FIX: Single query instead of N+1 queries
+        // This query gets all items with their claimed quantities in one go
+        String sql = "SELECT " +
+                     "  ri.item_id, " +
+                     "  ri.name, " +
+                     "  ri.quantity as item_quantity, " +
+                     "  COALESCE(SUM(ia.quantity), 0) as total_claimed " +
+                     "FROM receipt_items ri " +
+                     "LEFT JOIN item_assignments ia ON ri.item_id = ia.item_id " +
+                     "WHERE ri.receipt_id = ? " +
+                     "GROUP BY ri.item_id, ri.name, ri.quantity";
         
-        // Check each item to see if total claimed quantity equals item quantity
-        // Count all assignments (including paid items) - they were claimed before payment
-        String sql = "SELECT COALESCE(SUM(quantity), 0) as total_claimed " +
-                     "FROM item_assignments " +
-                     "WHERE item_id = ?";
-        
-        for (ReceiptItem item : items) {
-            int itemQuantity = item.getQuantity();
-            int totalClaimed = 0;
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, receiptId);
             
-            try (Connection conn = dbConnection.getConnection();
-                 PreparedStatement pstmt = conn.prepareStatement(sql)) {
-                pstmt.setInt(1, item.getItemId());
-                try (ResultSet rs = pstmt.executeQuery()) {
-                    if (rs.next()) {
-                        totalClaimed = rs.getInt("total_claimed");
+            try (ResultSet rs = pstmt.executeQuery()) {
+                int itemCount = 0;
+                while (rs.next()) {
+                    itemCount++;
+                    int itemQuantity = rs.getInt("item_quantity");
+                    int totalClaimed = rs.getInt("total_claimed");
+                    int itemId = rs.getInt("item_id");
+                    String itemName = rs.getString("name");
+                    
+                    System.out.println("[ReceiptDAO] Receipt " + receiptId + " item " + itemId + " (" + itemName + "): quantity=" + itemQuantity + ", totalClaimed=" + totalClaimed);
+                    
+                    // If any item is not fully claimed, return false
+                    if (totalClaimed < itemQuantity) {
+                        System.out.println("[ReceiptDAO] Receipt " + receiptId + " item " + itemId + ": claimed " + totalClaimed + "/" + itemQuantity + " - NOT all claimed");
+                        return false;
                     }
                 }
-            } catch (SQLException e) {
-                System.err.println("Error checking if all items claimed: " + e.getMessage());
-                return false;
+                
+                if (itemCount == 0) {
+                    // No items means not all claimed - receipt should stay in Pending
+                    System.out.println("[ReceiptDAO] Receipt " + receiptId + " has no items - not all claimed (stays in Pending)");
+                    return false;
+                }
+                
+                System.out.println("[ReceiptDAO] Receipt " + receiptId + ": ALL " + itemCount + " items are fully claimed - can move to History");
+                return true; // All items are fully claimed
             }
-            
-            // If any item is not fully claimed, return false
-            if (totalClaimed < itemQuantity) {
-                System.out.println("[ReceiptDAO] Receipt " + receiptId + " item " + item.getItemId() + ": claimed " + totalClaimed + "/" + itemQuantity + " - not all claimed");
-                return false;
-            }
+        } catch (SQLException e) {
+            System.err.println("[ReceiptDAO] ERROR: Error checking if all items claimed: " + e.getMessage());
+            e.printStackTrace();
+            return false;
         }
-        
-        System.out.println("[ReceiptDAO] Receipt " + receiptId + ": ALL items are fully claimed - can move to History");
-        return true; // All items are fully claimed
     }
 
     /**
@@ -1236,37 +1639,22 @@ public class ReceiptDAO {
      * @return true if receipt was marked as completed, false otherwise
      */
     public boolean checkAndMarkReceiptCompleted(int receiptId) {
-        // First check if all items are claimed
-        if (!areAllItemsClaimed(receiptId)) {
-            return false; // Not all items are claimed yet
-        }
-        List<Map<String, Object>> participants = getParticipantsWithPaymentStatus(receiptId);
+        // CRITICAL FIX: Check if all items are paid for (paid_for = 1 or paid_by IS NOT NULL)
+        // A receipt is complete when ALL items are paid for, regardless of participants
+        boolean allItemsPaid = areAllItemsPaidFor(receiptId);
         
-        if (participants.isEmpty()) {
-            return false; // No accepted participants
-        }
-
-        // Check if all participants have paid their full amount
-        boolean allPaid = true;
-        for (Map<String, Object> participant : participants) {
-            float paidAmount = (Float) participant.get("paid_amount");
-            float owedAmount = (Float) participant.get("owed_amount");
-            
-            // Allow small rounding differences (0.01)
-            if (paidAmount < owedAmount - 0.01f) {
-                allPaid = false;
-                break;
-            }
-        }
-
-        if (allPaid) {
+        if (allItemsPaid) {
             // Mark receipt as completed
             boolean receiptUpdated = updateReceiptStatus(receiptId, "completed");
             
+            // CRITICAL FIX: Also update the 'complete' column to 1
+            // This is what getAllReceiptsForUser() queries for to show receipts in History
+            updateReceiptCompleteStatus(receiptId);
+            
             if (receiptUpdated) {
-                // FIX 3D: Mark all participants as 'completed' so receipt moves to History for everyone
+                // Mark all participants as 'completed' so receipt moves to History for everyone
                 updateAllParticipantsStatus(receiptId, "completed");
-                System.out.println("Receipt " + receiptId + " is now fully paid and completed");
+                System.out.println("Receipt " + receiptId + " is now fully paid and completed (all items paid_for=1, status='completed', complete=1)");
             }
             
             return receiptUpdated;

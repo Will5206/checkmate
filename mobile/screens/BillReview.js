@@ -17,6 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomNavBar from '../components/BottomNavBar';
 import { colors, spacing, typography } from '../styles/theme';
 import { createReceipt, claimItem, unclaimItem, getItemAssignments, payReceipt, addParticipantsToReceipt } from '../services/receiptsService';
+import { getFriendsList } from '../services/friendsService';
 
 export default function BillReview() {
   const navigation = useNavigation();
@@ -42,6 +43,10 @@ export default function BillReview() {
   const [billData, setBillData] = useState(defaultBillData);
   const [friendsEmails, setFriendsEmails] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+  const [friends, setFriends] = useState([]);
+  const [showFriendsDropdown, setShowFriendsDropdown] = useState(false);
+  const [selectedFriendEmails, setSelectedFriendEmails] = useState([]);
+  const [isLoadingFriends, setIsLoadingFriends] = useState(false);
   const [isFromCamera, setIsFromCamera] = useState(false);
   const [isFromActivity, setIsFromActivity] = useState(false);
   const [receiptId, setReceiptId] = useState(null);
@@ -151,18 +156,19 @@ export default function BillReview() {
     }
   }, [isFromActivity, receiptId]);
   
-  // Also reload when screen comes into focus to get latest payment status
+  // Also reload when screen comes into focus to get latest payment status and item claims
+  // This ensures we see updates when someone else claims items
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
       if (isFromActivity && receiptId) {
-        console.log('BillReview screen focused - reloading payment info');
+        console.log('BillReview screen focused - reloading payment info and item assignments');
         loadItemAssignments();
       }
     });
     return unsubscribe;
-  }, [navigation, isFromActivity, receiptId]);
+  }, [navigation, isFromActivity, receiptId, loadItemAssignments]);
 
-  const loadItemAssignments = async () => {
+  const loadItemAssignments = React.useCallback(async () => {
     if (!receiptId) return;
     
     setIsLoadingAssignments(true);
@@ -228,7 +234,7 @@ export default function BillReview() {
         // 3. We have payment info for items (meaning payment was actually made)
         // This prevents false positives when user hasn't claimed anything yet
         const hasItemsClaimed = Object.keys(response.assignments || {}).length > 0;
-        const hasPaymentInfo = Object.keys(paymentInfo).length > 0;
+        const hasPaymentInfo = Object.keys(expandedPaymentInfo).length > 0;
         const hasNoOwedAmount = newOwedAmount <= 0.01;
         
         // Only mark as paid if user has claimed items AND paid for them
@@ -237,7 +243,7 @@ export default function BillReview() {
         // Always set based on actual payment status
         setUserHasPaid(hasPaid);
         
-        console.log('Payment status check - hasPaid:', hasPaid, 'hasItemsClaimed:', hasItemsClaimed, 'owedAmount:', newOwedAmount, 'paymentInfo items:', Object.keys(paymentInfo).length);
+        console.log('Payment status check - hasPaid:', hasPaid, 'hasItemsClaimed:', hasItemsClaimed, 'owedAmount:', newOwedAmount, 'paymentInfo items:', Object.keys(expandedPaymentInfo).length);
       } else {
         console.error('Failed to load item assignments:', response.message);
       }
@@ -247,7 +253,7 @@ export default function BillReview() {
     } finally {
       setIsLoadingAssignments(false);
     }
-  };
+  }, [receiptId]);
 
   const handleToggleItemClaim = async (itemId) => {
     if (!receiptId) return;
@@ -285,10 +291,13 @@ export default function BillReview() {
       }
       
       if (response.success) {
-        // Update with actual values from server
-        setItemAssignments(newAssignments);
+        // Update owedAmount from server
         setOwedAmount(response.owedAmount || 0);
-        // No reload needed - optimistic update already done
+        // Reload assignments to get latest state (including other users' claims)
+        // Use a small delay to allow backend async update to complete
+        setTimeout(async () => {
+          await loadItemAssignments();
+        }, 500);
       } else {
         // Rollback optimistic update on error
         setItemAssignments(previousAssignments);
@@ -459,6 +468,69 @@ export default function BillReview() {
     loadUserId();
   }, []);
 
+  // Load friends list when creating new receipt (not from activity)
+  useEffect(() => {
+    if (!isFromActivity) {
+      loadFriends();
+    }
+  }, [isFromActivity]);
+
+  // Sync selectedFriendEmails with friendsEmails when manually typed
+  useEffect(() => {
+    if (!isFromActivity) {
+      const typedEmails = friendsEmails.split(',').map(e => e.trim()).filter(e => e);
+      // Remove selected friends that are no longer in the typed emails
+      const remainingSelected = selectedFriendEmails.filter(email => 
+        typedEmails.includes(email)
+      );
+      if (remainingSelected.length !== selectedFriendEmails.length) {
+        setSelectedFriendEmails(remainingSelected);
+      }
+    }
+  }, [friendsEmails]);
+
+  const loadFriends = async () => {
+    setIsLoadingFriends(true);
+    try {
+      const response = await getFriendsList();
+      if (response.success) {
+        setFriends(response.friends || []);
+      }
+    } catch (error) {
+      console.error('Error loading friends:', error);
+    } finally {
+      setIsLoadingFriends(false);
+    }
+  };
+
+  const handleFriendSelect = (friendEmail) => {
+    // Add friend email to selected list if not already selected
+    if (!selectedFriendEmails.includes(friendEmail)) {
+      const newSelected = [...selectedFriendEmails, friendEmail];
+      setSelectedFriendEmails(newSelected);
+      
+      // Also add to friendsEmails string (comma-separated)
+      const currentEmails = friendsEmails.split(',').map(e => e.trim()).filter(e => e);
+      if (!currentEmails.includes(friendEmail)) {
+        const updatedEmails = currentEmails.length > 0 
+          ? `${friendsEmails}, ${friendEmail}`
+          : friendEmail;
+        setFriendsEmails(updatedEmails);
+      }
+    }
+    // Close dropdown after selection
+    setShowFriendsDropdown(false);
+  };
+
+  const handleRemoveSelectedFriend = (emailToRemove) => {
+    const newSelected = selectedFriendEmails.filter(email => email !== emailToRemove);
+    setSelectedFriendEmails(newSelected);
+    
+    // Remove from friendsEmails string
+    const currentEmails = friendsEmails.split(',').map(e => e.trim()).filter(e => e && e !== emailToRemove);
+    setFriendsEmails(currentEmails.join(', '));
+  };
+
   // Get other participants and their paid items
   useEffect(() => {
     if (!receiptId || !isFromActivity || !currentUserId || Object.keys(itemPaymentInfo).length === 0) {
@@ -507,6 +579,12 @@ export default function BillReview() {
     return name.substring(0, 2).toUpperCase();
   };
 
+  const getAvatarColor = (name) => {
+    const colors = ['#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#8B5CF6', '#EC4899'];
+    const index = (name || '').length % colors.length;
+    return colors[index];
+  };
+
   // Format date for display
   const formatDisplayDate = (dateStr) => {
     if (!dateStr) return 'Unknown date';
@@ -524,8 +602,12 @@ export default function BillReview() {
   };
 
   const handleCreateAndShare = async () => {
-    if (!friendsEmails.trim()) {
-      Alert.alert('Error', 'Please enter at least one friend\'s email address');
+    // Combine emails from both text input and selected friends, then deduplicate
+    const textEmails = friendsEmails.split(',').map(e => e.trim()).filter(e => e);
+    const allEmails = [...new Set([...selectedFriendEmails, ...textEmails])];
+    
+    if (allEmails.length === 0) {
+      Alert.alert('Error', 'Please enter at least one friend\'s email address or select a friend');
       return;
     }
 
@@ -534,7 +616,7 @@ export default function BillReview() {
     try {
       // If viewing from Activity and user is uploader, add participants to existing receipt
       if (isFromActivity && receiptId && isUploader) {
-        const participantEmails = friendsEmails.split(',').map(email => email.trim()).filter(email => email);
+        const participantEmails = allEmails;
         const response = await addParticipantsToReceipt(receiptId, participantEmails);
         
         if (response.success) {
@@ -561,7 +643,7 @@ export default function BillReview() {
             price: item.price,
             qty: 1, // All items are already expanded to qty=1
           })),
-          participants: friendsEmails.split(',').map(email => email.trim()).filter(email => email),
+          participants: allEmails,
         };
         
         // Call API to create receipt
@@ -570,7 +652,7 @@ export default function BillReview() {
         console.log('Receipt creation response:', response);
         
         if (response.success) {
-          const participantsCount = response.participantsAdded || 0;
+          const participantsCount = (response.participantsAdded || 0) - 1; // Subtract 1 to exclude uploader
           const message = participantsCount > 0
             ? `Bill created successfully! Shared with ${participantsCount} friend${participantsCount > 1 ? 's' : ''}.`
             : 'Bill created successfully! (Note: Some friends may not have accounts yet)';
@@ -839,8 +921,104 @@ export default function BillReview() {
               <Text style={styles.cardTitle}>Invite Friends</Text>
             </View>
             <View style={styles.inviteContent}>
+              {/* Friends Dropdown */}
+              <View style={styles.friendsDropdownContainer}>
+                <TouchableOpacity
+                  style={styles.friendsDropdownButton}
+                  onPress={() => setShowFriendsDropdown(!showFriendsDropdown)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.friendsDropdownButtonContent}>
+                    <Ionicons name="people-outline" size={20} color="#0d9488" />
+                    <Text style={styles.friendsDropdownButtonText}>Friends</Text>
+                    <Ionicons 
+                      name={showFriendsDropdown ? "chevron-up" : "chevron-down"} 
+                      size={20} 
+                      color="#6B7280" 
+                    />
+                  </View>
+                </TouchableOpacity>
+                
+                {showFriendsDropdown && (
+                  <View style={styles.friendsDropdownList}>
+                    {isLoadingFriends ? (
+                      <View style={styles.friendsDropdownLoading}>
+                        <ActivityIndicator size="small" color="#0d9488" />
+                        <Text style={styles.friendsDropdownLoadingText}>Loading friends...</Text>
+                      </View>
+                    ) : friends.length === 0 ? (
+                      <View style={styles.friendsDropdownEmpty}>
+                        <Text style={styles.friendsDropdownEmptyText}>No friends yet</Text>
+                        <Text style={styles.friendsDropdownEmptySubtext}>Add friends from the Friends tab</Text>
+                      </View>
+                    ) : (
+                      <ScrollView 
+                        style={styles.friendsDropdownScroll}
+                        nestedScrollEnabled={true}
+                        showsVerticalScrollIndicator={true}
+                      >
+                        {friends.map((friend, index) => {
+                          const isSelected = selectedFriendEmails.includes(friend.email);
+                          return (
+                            <TouchableOpacity
+                              key={friend.userId || index}
+                              style={[
+                                styles.friendDropdownItem,
+                                isSelected && styles.friendDropdownItemSelected
+                              ]}
+                              onPress={() => handleFriendSelect(friend.email)}
+                              activeOpacity={0.7}
+                            >
+                              <View style={styles.friendDropdownItemContent}>
+                                <View style={[styles.friendDropdownAvatar, { backgroundColor: getAvatarColor(friend.name) }]}>
+                                  <Text style={styles.friendDropdownAvatarText}>
+                                    {getInitials(friend.name)}
+                                  </Text>
+                                </View>
+                                <View style={styles.friendDropdownInfo}>
+                                  <Text style={styles.friendDropdownName}>{friend.name || 'Unknown'}</Text>
+                                  <Text style={styles.friendDropdownEmail}>{friend.email}</Text>
+                                </View>
+                                {isSelected && (
+                                  <Ionicons name="checkmark-circle" size={24} color="#0d9488" />
+                                )}
+                              </View>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    )}
+                  </View>
+                )}
+              </View>
+
+              {/* Selected Friends Chips */}
+              {selectedFriendEmails.length > 0 && (
+                <View style={styles.selectedFriendsContainer}>
+                  <Text style={styles.selectedFriendsLabel}>Selected:</Text>
+                  <View style={styles.selectedFriendsChips}>
+                    {selectedFriendEmails.map((email, index) => {
+                      const friend = friends.find(f => f.email === email);
+                      return (
+                        <View key={email || index} style={styles.friendChip}>
+                          <Text style={styles.friendChipText}>
+                            {friend?.name || email}
+                          </Text>
+                          <TouchableOpacity
+                            onPress={() => handleRemoveSelectedFriend(email)}
+                            style={styles.friendChipRemove}
+                          >
+                            <Ionicons name="close-circle" size={18} color="#6B7280" />
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+
               <Text style={styles.inputLabel}>
-                Enter email addresses (separated by commas)
+                Or enter email addresses (separated by commas)
               </Text>
               <TextInput
                 ref={emailInputRef}
@@ -864,9 +1042,9 @@ export default function BillReview() {
               
               <View style={styles.buttonContainer}>
                 <TouchableOpacity
-                  style={[styles.primaryButton, (isCreating || !friendsEmails.trim()) && styles.buttonDisabled]}
+                  style={[styles.primaryButton, (isCreating || (friendsEmails.trim().length === 0 && selectedFriendEmails.length === 0)) && styles.buttonDisabled]}
                   onPress={handleCreateAndShare}
-                  disabled={isCreating || !friendsEmails.trim()}
+                  disabled={isCreating || (friendsEmails.trim().length === 0 && selectedFriendEmails.length === 0)}
                 >
                   {isCreating ? (
                     <ActivityIndicator color="#fff" />
@@ -1416,5 +1594,136 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#0d9488',
+  },
+  friendsDropdownContainer: {
+    marginBottom: spacing.md,
+  },
+  friendsDropdownButton: {
+    backgroundColor: '#f9fafb',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    padding: spacing.md,
+  },
+  friendsDropdownButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.xs,
+  },
+  friendsDropdownButtonText: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+    marginLeft: spacing.xs,
+  },
+  friendsDropdownList: {
+    marginTop: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    maxHeight: 200,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  friendsDropdownLoading: {
+    padding: spacing.md,
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  friendsDropdownLoadingText: {
+    fontSize: typography.sizes.sm,
+    color: colors.textLight,
+  },
+  friendsDropdownEmpty: {
+    padding: spacing.md,
+    alignItems: 'center',
+  },
+  friendsDropdownEmptyText: {
+    fontSize: typography.sizes.sm,
+    fontWeight: '600',
+    color: colors.textLight,
+    marginBottom: 4,
+  },
+  friendsDropdownEmptySubtext: {
+    fontSize: typography.sizes.xs,
+    color: colors.textLight,
+  },
+  friendsDropdownScroll: {
+    maxHeight: 200,
+  },
+  friendDropdownItem: {
+    padding: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f3f4f6',
+  },
+  friendDropdownItemSelected: {
+    backgroundColor: '#ccfbf1',
+  },
+  friendDropdownItemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  friendDropdownAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  friendDropdownAvatarText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  friendDropdownInfo: {
+    flex: 1,
+  },
+  friendDropdownName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  friendDropdownEmail: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  selectedFriendsContainer: {
+    marginBottom: spacing.md,
+  },
+  selectedFriendsLabel: {
+    fontSize: typography.sizes.sm,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: spacing.xs,
+  },
+  selectedFriendsChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  friendChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ccfbf1',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: 16,
+    gap: 4,
+  },
+  friendChipText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#0d9488',
+  },
+  friendChipRemove: {
+    marginLeft: 2,
   },
 });

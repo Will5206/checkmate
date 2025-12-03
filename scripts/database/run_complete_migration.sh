@@ -60,10 +60,25 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 1
 fi
 
+# Check if column already exists
+echo ""
+echo -e "${YELLOW}Checking if 'complete' column already exists...${NC}"
+COLUMN_EXISTS=$(mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -sN -e "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='$DB_NAME' AND TABLE_NAME='receipts' AND COLUMN_NAME='complete';" 2>&1 | grep -v "Warning" | grep -v "Using a password")
+
+if [ "$COLUMN_EXISTS" = "1" ]; then
+    echo -e "${GREEN}✓ Column 'complete' already exists!${NC}"
+    echo ""
+    echo "The migration has already been applied. Verifying column structure..."
+    mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -e "SHOW COLUMNS FROM receipts WHERE Field='complete';" 2>&1 | grep -v "Warning" | grep -v "Using a password"
+    echo ""
+    echo -e "${GREEN}✓ Database is ready. You can proceed with testing.${NC}"
+    exit 0
+fi
+
 # Run the migration
 echo ""
 echo -e "${YELLOW}Running migration script...${NC}"
-mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" < scripts/database/migrate_add_complete_column.sql
+mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" < scripts/database/migrate_add_complete_column.sql 2>&1 | grep -v "Warning" | grep -v "Using a password"
 
 if [ $? -eq 0 ]; then
     echo ""
