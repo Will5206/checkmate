@@ -586,7 +586,8 @@ export default function BillReview() {
         console.log('Receipt creation response:', response);
         
         if (response.success) {
-          const participantsCount = response.participantsAdded || 0;
+          // Subtract 1 to exclude the uploader from the count
+          const participantsCount = Math.max(0, (response.participantsAdded || 0) - 1);
           const message = participantsCount > 0
             ? `Bill created successfully! Shared with ${participantsCount} friend${participantsCount > 1 ? 's' : ''}.`
             : 'Bill created successfully! (Note: Some friends may not have accounts yet)';

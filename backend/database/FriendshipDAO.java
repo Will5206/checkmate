@@ -24,12 +24,13 @@ public class FriendshipDAO {
      * Add a new friendship between two users.
      * Creates as 'pending' status - requires acceptance.
      *
-     * @param userId1 First user's ID
-     * @param userId2 Second user's ID
+     * @param userId1 First user's ID (the requester - who sends the request)
+     * @param userId2 Second user's ID (the recipient - who receives the request)
      * @return The created Friend object, or null if creation failed
      */
     public Friend addFriendship(String userId1, String userId2) {
-        String sql = "INSERT INTO friendships (user_id_1, user_id_2, status) VALUES (?, ?, 'pending')";
+        // userId1 is the requester, userId2 is the recipient
+        String sql = "INSERT INTO friendships (user_id_1, user_id_2, status, requested_by) VALUES (?, ?, 'pending', ?)";
 
         try (Connection conn = dbConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
@@ -40,6 +41,7 @@ public class FriendshipDAO {
 
             pstmt.setString(1, smallerId);
             pstmt.setString(2, largerId);
+            pstmt.setString(3, userId1); // requested_by is always the sender (userId1)
 
             int affectedRows = pstmt.executeUpdate();
 
@@ -277,8 +279,9 @@ public class FriendshipDAO {
         String userId2 = rs.getString("user_id_2");
         String status = rs.getString("status");
         Timestamp createdAt = rs.getTimestamp("created_at");
+        String requestedBy = rs.getString("requested_by");
 
         return new Friend(friendshipId, userId1, userId2,
-                         new java.util.Date(createdAt.getTime()), status);
+                         new java.util.Date(createdAt.getTime()), status, requestedBy);
     }
 }

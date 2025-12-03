@@ -71,7 +71,8 @@ export default function SignupScreen({ navigation }) {
 
       if (result.success) {
         setError(null);
-        navigation.replace('Home');
+        // Navigate to Login screen after successful signup
+        navigation.replace('Login');
       } else {
         setError(result.message || 'Account creation failed');
       }

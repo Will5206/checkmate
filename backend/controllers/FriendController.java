@@ -184,21 +184,33 @@ public class FriendController {
                         return;
                     } else if ("pending".equals(status)) {
                         // Check if current user is the requester (they sent the request)
-                        // Since we don't track who initiated, we check if current user is user_id_1 or user_id_2
-                        // If current user is in the friendship and status is pending, they likely sent it
-                        // But to be safe, we'll check: if current user tries to add again while pending,
-                        // it means they already sent it (otherwise they would have received it)
-                        // So we show "friend request pending"
-                        JSONObject resp = new JSONObject()
-                            .put("success", true)
-                            .put("added", false)
-                            .put("message", "Friend request pending")
-                            .put("userId", userId)
-                            .put("friendId", friendId)
-                            .put("friendName", friendUser.getName())
-                            .put("friendEmail", friendUser.getEmail());
-                        sendJson(exchange, 200, resp);
-                        return;
+                        String requestedBy = existingFriendship.getRequestedBy();
+                        if (requestedBy != null && requestedBy.equals(userId)) {
+                            // Current user already sent the request - show pending message
+                            JSONObject resp = new JSONObject()
+                                .put("success", true)
+                                .put("added", false)
+                                .put("message", "Friend request pending")
+                                .put("userId", userId)
+                                .put("friendId", friendId)
+                                .put("friendName", friendUser.getName())
+                                .put("friendEmail", friendUser.getEmail());
+                            sendJson(exchange, 200, resp);
+                            return;
+                        } else {
+                            // Current user is the recipient - they can't send a request back
+                            // They should accept/decline the existing request instead
+                            JSONObject resp = new JSONObject()
+                                .put("success", true)
+                                .put("added", false)
+                                .put("message", "You have a pending friend request from this user")
+                                .put("userId", userId)
+                                .put("friendId", friendId)
+                                .put("friendName", friendUser.getName())
+                                .put("friendEmail", friendUser.getEmail());
+                            sendJson(exchange, 200, resp);
+                            return;
+                        }
                     } else if ("declined".equals(status)) {
                         // Previously declined - create new pending request
                         // First remove the declined friendship, then create new pending one
@@ -308,6 +320,24 @@ public class FriendController {
                     return;
                 }
 
+                // Verify that current user (userId) is the recipient, not the requester
+                Friend friendship = friendService.getFriendship(userId, friendId);
+                if (friendship == null || !"pending".equals(friendship.getStatus())) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "No pending friend request found"));
+                    return;
+                }
+                
+                // Check if current user is the recipient (not the requester)
+                String requestedBy = friendship.getRequestedBy();
+                if (requestedBy == null || requestedBy.equals(userId)) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Only the recipient can accept a friend request"));
+                    return;
+                }
+
                 boolean accepted = friendService.acceptFriendRequest(userId, friendId);
                 
                 JSONObject resp = new JSONObject()
@@ -351,6 +381,24 @@ public class FriendController {
                     sendJson(exchange, 400, new JSONObject()
                         .put("success", false)
                         .put("message", "userId and friendId are required"));
+                    return;
+                }
+
+                // Verify that current user (userId) is the recipient, not the requester
+                Friend friendship = friendService.getFriendship(userId, friendId);
+                if (friendship == null || !"pending".equals(friendship.getStatus())) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "No pending friend request found"));
+                    return;
+                }
+                
+                // Check if current user is the recipient (not the requester)
+                String requestedBy = friendship.getRequestedBy();
+                if (requestedBy == null || requestedBy.equals(userId)) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Only the recipient can decline a friend request"));
                     return;
                 }
 
@@ -402,22 +450,19 @@ public class FriendController {
                 // Get all friendships for this user (including pending)
                 List<Friend> allFriendships = friendService.listFriendships(userId);
                 
-                // Filter to only pending requests where someone else requested to be friends with current user
+                // Filter to only pending requests where current user is the RECIPIENT (not the requester)
+                // Only show requests where someone else sent a request TO the current user
                 UserDAO userDAO = new UserDAO();
                 JSONArray pendingRequests = new JSONArray();
                 
                 for (Friend friendship : allFriendships) {
                     if ("pending".equals(friendship.getStatus())) {
-                        // Find which user is the requester (the other user, not the current user)
-                        String requesterId = friendship.getUserId1().equals(userId) 
-                            ? friendship.getUserId2() 
-                            : friendship.getUserId1();
+                        String requestedBy = friendship.getRequestedBy();
                         
-                        // Only show requests where someone else sent a request TO the current user
-                        // (i.e., current user is the recipient, not the sender)
-                        // We determine this by checking if the requester is different from current user
-                        if (!requesterId.equals(userId)) {
-                            User requester = userDAO.findUserById(requesterId);
+                        // Only show if current user is NOT the requester (i.e., they are the recipient)
+                        if (requestedBy != null && !requestedBy.equals(userId)) {
+                            // Current user is the recipient, show the request
+                            User requester = userDAO.findUserById(requestedBy);
                             if (requester != null) {
                                 JSONObject requestObj = new JSONObject()
                                     .put("friendshipId", friendship.getFriendshipId())
