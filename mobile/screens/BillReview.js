@@ -17,7 +17,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomNavBar from '../components/BottomNavBar';
 import { colors, spacing, typography } from '../styles/theme';
 import { createReceipt, claimItem, unclaimItem, getItemAssignments, payReceipt, addParticipantsToReceipt } from '../services/receiptsService';
-import { getFriendsList } from '../services/friendsService';
 
 export default function BillReview() {
   const navigation = useNavigation();
@@ -43,10 +42,6 @@ export default function BillReview() {
   const [billData, setBillData] = useState(defaultBillData);
   const [friendsEmails, setFriendsEmails] = useState('');
   const [isCreating, setIsCreating] = useState(false);
-  const [friends, setFriends] = useState([]);
-  const [showFriendsDropdown, setShowFriendsDropdown] = useState(false);
-  const [selectedFriendEmails, setSelectedFriendEmails] = useState([]);
-  const [isLoadingFriends, setIsLoadingFriends] = useState(false);
   const [isFromCamera, setIsFromCamera] = useState(false);
   const [isFromActivity, setIsFromActivity] = useState(false);
   const [receiptId, setReceiptId] = useState(null);
@@ -174,14 +169,57 @@ export default function BillReview() {
     try {
       const response = await getItemAssignments(receiptId);
       if (response.success) {
-        setItemAssignments(response.assignments || {});
+        const backendAssignments = response.assignments || {};
+        const expandedAssignments = {};
+        
+        // Map backend assignments (by original itemId) to expanded itemIds
+        // Backend returns: { "1": 2 } means itemId 1 has qty 2 claimed
+        // Expanded items: "1_0", "1_1" (if original qty was 2)
+        // So we need to mark "1_0" and "1_1" as claimed if backend says "1" has qty 2 claimed
+        billData.items.forEach((item) => {
+          const expandedItemId = item.itemId || item.id;
+          const originalItemId = item.originalItemId || expandedItemId;
+          
+          // If this is an expanded item, check the original itemId's assignment
+          if (item.originalItemId) {
+            const claimedQty = backendAssignments[originalItemId] || 0;
+            // Find which instance this is (e.g., "1_0" is instance 0, "1_1" is instance 1)
+            const instanceMatch = expandedItemId.match(/_(\d+)$/);
+            const instanceIndex = instanceMatch ? parseInt(instanceMatch[1]) : 0;
+            
+            // Mark as claimed if this instance is within the claimed quantity
+            if (instanceIndex < claimedQty) {
+              expandedAssignments[expandedItemId] = 1;
+            }
+          } else {
+            // Not an expanded item, use assignment directly
+            if (backendAssignments[originalItemId]) {
+              expandedAssignments[expandedItemId] = backendAssignments[originalItemId];
+            }
+          }
+        });
+        
+        setItemAssignments(expandedAssignments);
         const newOwedAmount = response.owedAmount || 0;
         setOwedAmount(newOwedAmount);
         
         // Store payment info for all items - this shows which items are paid and by whom
-        const paymentInfo = response.itemPaymentInfo || {};
-        setItemPaymentInfo(paymentInfo);
-        console.log('Loaded payment info for', Object.keys(paymentInfo).length, 'items:', paymentInfo);
+        // Map payment info from original itemIds to expanded itemIds
+        const backendPaymentInfo = response.itemPaymentInfo || {};
+        const expandedPaymentInfo = {};
+        
+        billData.items.forEach((item) => {
+          const expandedItemId = item.itemId || item.id;
+          const originalItemId = item.originalItemId || expandedItemId;
+          const paymentInfo = backendPaymentInfo[String(originalItemId)] || backendPaymentInfo[originalItemId];
+          
+          if (paymentInfo) {
+            expandedPaymentInfo[expandedItemId] = paymentInfo;
+          }
+        });
+        
+        setItemPaymentInfo(expandedPaymentInfo);
+        console.log('Loaded payment info for', Object.keys(expandedPaymentInfo).length, 'items:', expandedPaymentInfo);
         
         // Check if user has actually paid
         // Only set userHasPaid to true if:
@@ -219,6 +257,10 @@ export default function BillReview() {
       return; // Already processing this item
     }
     
+    // Find the item to get its originalItemId (for backend) or use itemId if not expanded
+    const item = billData.items.find(i => (i.itemId || i.id) === itemId);
+    const backendItemId = item?.originalItemId || itemId; // Use originalItemId if available, otherwise use itemId
+    
     const isClaimed = itemAssignments[itemId] && itemAssignments[itemId] > 0;
     
     // Mark item as being processed
@@ -237,9 +279,9 @@ export default function BillReview() {
     try {
       let response;
       if (isClaimed) {
-        response = await unclaimItem(receiptId, itemId);
+        response = await unclaimItem(receiptId, backendItemId);
       } else {
-        response = await claimItem(receiptId, itemId, 1);
+        response = await claimItem(receiptId, backendItemId, 1);
       }
       
       if (response.success) {
@@ -331,13 +373,29 @@ export default function BillReview() {
   const transformReceiptData = (data) => {
     // Backend parser returns: items (with name, qty, price), subtotal, tax, total, merchant
     // Note: price in items might be per-item or line total - we'll treat it as per-item
-    const items = (data.items || []).map((item, index) => ({
-      itemId: item.itemId || item.id || (index + 1), // Preserve itemId if present (needed for claiming)
-      id: item.itemId || item.id || (index + 1), // Use itemId if available, otherwise use index
-      name: item.name || 'Unknown Item',
-      price: parseFloat(item.price) || 0,  // Price per item
-      qty: item.qty || item.quantity || 1, // Support both qty and quantity
-    }));
+    // Expand items with qty > 1 into multiple items with qty=1 so users can claim individually
+    const expandedItems = [];
+    let itemIndex = 0;
+    
+    (data.items || []).forEach((item, originalIndex) => {
+      const baseItemId = item.itemId || item.id || (originalIndex + 1);
+      const qty = item.qty || item.quantity || 1;
+      const price = parseFloat(item.price) || 0;
+      const name = item.name || 'Unknown Item';
+      
+      // Create one item per quantity, each with qty=1
+      for (let i = 0; i < qty; i++) {
+        expandedItems.push({
+          itemId: `${baseItemId}_${i}`, // Unique ID for each instance (e.g., "1_0", "1_1")
+          originalItemId: baseItemId, // Keep reference to original itemId for backend operations
+          id: `${baseItemId}_${i}`,
+          name: name,
+          price: price, // Price per item
+          qty: 1, // Always 1 for expanded items
+        });
+        itemIndex++;
+      }
+    });
 
     const total = parseFloat(data.total) || 0;
     const tax = parseFloat(data.tax) || 0;
@@ -345,7 +403,8 @@ export default function BillReview() {
     const subtotal = parseFloat(data.subtotal) || 0;
     
     // Calculate subtotal if not provided (sum of price * qty for all items)
-    const calculatedSubtotal = subtotal || (items.reduce((sum, item) => sum + (item.price * item.qty), 0));
+    // Since all items now have qty=1, this is just sum of prices
+    const calculatedSubtotal = subtotal || (expandedItems.reduce((sum, item) => sum + item.price, 0));
     
     // Calculate tip if not provided (as difference between total and subtotal + tax)
     const calculatedTip = tip || Math.max(0, total - calculatedSubtotal - tax);
@@ -353,7 +412,7 @@ export default function BillReview() {
     return {
       restaurant_name: data.merchant || data.restaurant_name || 'Unknown Merchant',
       date: data.date || new Date().toLocaleDateString(),
-      items: items,
+      items: expandedItems,
       tax: tax || 0,
       tip: calculatedTip,
       total: total,
@@ -400,69 +459,6 @@ export default function BillReview() {
     loadUserId();
   }, []);
 
-  // Load friends list when creating new receipt (not from activity)
-  useEffect(() => {
-    if (!isFromActivity) {
-      loadFriends();
-    }
-  }, [isFromActivity]);
-
-  // Sync selectedFriendEmails with friendsEmails when manually typed
-  useEffect(() => {
-    if (!isFromActivity) {
-      const typedEmails = friendsEmails.split(',').map(e => e.trim()).filter(e => e);
-      // Remove selected friends that are no longer in the typed emails
-      const remainingSelected = selectedFriendEmails.filter(email => 
-        typedEmails.includes(email)
-      );
-      if (remainingSelected.length !== selectedFriendEmails.length) {
-        setSelectedFriendEmails(remainingSelected);
-      }
-    }
-  }, [friendsEmails]);
-
-  const loadFriends = async () => {
-    setIsLoadingFriends(true);
-    try {
-      const response = await getFriendsList();
-      if (response.success) {
-        setFriends(response.friends || []);
-      }
-    } catch (error) {
-      console.error('Error loading friends:', error);
-    } finally {
-      setIsLoadingFriends(false);
-    }
-  };
-
-  const handleFriendSelect = (friendEmail) => {
-    // Add friend email to selected list if not already selected
-    if (!selectedFriendEmails.includes(friendEmail)) {
-      const newSelected = [...selectedFriendEmails, friendEmail];
-      setSelectedFriendEmails(newSelected);
-      
-      // Also add to friendsEmails string (comma-separated)
-      const currentEmails = friendsEmails.split(',').map(e => e.trim()).filter(e => e);
-      if (!currentEmails.includes(friendEmail)) {
-        const updatedEmails = currentEmails.length > 0 
-          ? `${friendsEmails}, ${friendEmail}`
-          : friendEmail;
-        setFriendsEmails(updatedEmails);
-      }
-    }
-    // Close dropdown after selection
-    setShowFriendsDropdown(false);
-  };
-
-  const handleRemoveSelectedFriend = (emailToRemove) => {
-    const newSelected = selectedFriendEmails.filter(email => email !== emailToRemove);
-    setSelectedFriendEmails(newSelected);
-    
-    // Remove from friendsEmails string
-    const currentEmails = friendsEmails.split(',').map(e => e.trim()).filter(e => e && e !== emailToRemove);
-    setFriendsEmails(currentEmails.join(', '));
-  };
-
   // Get other participants and their paid items
   useEffect(() => {
     if (!receiptId || !isFromActivity || !currentUserId || Object.keys(itemPaymentInfo).length === 0) {
@@ -492,7 +488,7 @@ export default function BillReview() {
         }
         
         const participant = participantsMap.get(payerId);
-        const itemTotal = calculateItemTotal(item.price * (item.qty || 1));
+        const itemTotal = calculateItemTotal(item.price); // qty is always 1 for expanded items
         participant.items.push(item.name);
         participant.totalAmount += itemTotal;
       }
@@ -509,13 +505,6 @@ export default function BillReview() {
       return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
     }
     return name.substring(0, 2).toUpperCase();
-  };
-
-  // Get avatar color for friend
-  const getAvatarColor = (name) => {
-    const colors = ['#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#8B5CF6', '#EC4899'];
-    const index = (name || '').length % colors.length;
-    return colors[index];
   };
 
   // Format date for display
@@ -545,9 +534,7 @@ export default function BillReview() {
     try {
       // If viewing from Activity and user is uploader, add participants to existing receipt
       if (isFromActivity && receiptId && isUploader) {
-        // Split, trim, filter, and deduplicate emails
-        const allEmails = friendsEmails.split(',').map(email => email.trim()).filter(email => email);
-        const participantEmails = [...new Set(allEmails)]; // Remove duplicates
+        const participantEmails = friendsEmails.split(',').map(email => email.trim()).filter(email => email);
         const response = await addParticipantsToReceipt(receiptId, participantEmails);
         
         if (response.success) {
@@ -563,6 +550,7 @@ export default function BillReview() {
         }
       } else {
         // Create new receipt
+        // Items are already expanded (qty=1 each), so send them as-is
         const receiptData = {
           restaurant_name: billData.restaurant_name,
           total_amount: billData.total,
@@ -571,13 +559,9 @@ export default function BillReview() {
           items: billData.items.map((item) => ({
             name: item.name,
             price: item.price,
-            qty: item.qty || 1,
+            qty: 1, // All items are already expanded to qty=1
           })),
-          participants: (() => {
-            // Split, trim, filter, and deduplicate emails
-            const allEmails = friendsEmails.split(',').map(email => email.trim()).filter(email => email);
-            return [...new Set(allEmails)]; // Remove duplicates
-          })(),
+          participants: friendsEmails.split(',').map(email => email.trim()).filter(email => email),
         };
         
         // Call API to create receipt
@@ -586,8 +570,7 @@ export default function BillReview() {
         console.log('Receipt creation response:', response);
         
         if (response.success) {
-          // Subtract 1 to exclude the uploader from the count
-          const participantsCount = Math.max(0, (response.participantsAdded || 0) - 1);
+          const participantsCount = response.participantsAdded || 0;
           const message = participantsCount > 0
             ? `Bill created successfully! Shared with ${participantsCount} friend${participantsCount > 1 ? 's' : ''}.`
             : 'Bill created successfully! (Note: Some friends may not have accounts yet)';
@@ -780,12 +763,10 @@ export default function BillReview() {
                             )
                           )}
                         </View>
-                        {item.qty > 1 && (
-                          <Text style={[styles.itemQty, isPaid && styles.itemQtyPaid]}>Qty: {item.qty}</Text>
-                        )}
+                        {/* Qty is always 1 for expanded items, so no need to show qty */}
                       </View>
                       <Text style={[styles.itemPrice, isPaid && styles.itemPricePaid]}>
-                        ${(item.price * (item.qty || 1)).toFixed(2)}
+                        ${item.price.toFixed(2)}
                       </Text>
                     </TouchableOpacity>
                     {index < billData.items.length - 1 && <View style={styles.separator} />}
@@ -796,8 +777,8 @@ export default function BillReview() {
           </View>
         </View>
 
-        {/* Your Portion - Payment Section (only shown when viewing from Activity, not paid, and NOT uploader) */}
-        {isFromActivity && !userHasPaid && !isUploader && (
+        {/* Your Portion - Payment Section (only shown when viewing from Activity and not paid) */}
+        {isFromActivity && !userHasPaid && (
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>Your Portion</Text>
@@ -815,25 +796,6 @@ export default function BillReview() {
                   <Ionicons name="card-outline" size={20} color="#fff" />
                   <Text style={styles.payButtonText}>Pay ${owedAmount.toFixed(2)}</Text>
                 </TouchableOpacity>
-              )}
-            </View>
-          </View>
-        )}
-        
-        {/* Uploader Info Section (only shown for uploader) */}
-        {isFromActivity && isUploader && (
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>Your Items</Text>
-            </View>
-            <View style={styles.cardContent}>
-              {Object.keys(itemAssignments).length === 0 ? (
-                <Text style={styles.hintText}>Tap items above to claim them</Text>
-              ) : (
-                <Text style={styles.hintText}>
-                  You've claimed {Object.keys(itemAssignments).length} item{Object.keys(itemAssignments).length !== 1 ? 's' : ''}. 
-                  Waiting for others to claim and pay their items.
-                </Text>
               )}
             </View>
           </View>
@@ -874,104 +836,8 @@ export default function BillReview() {
               <Text style={styles.cardTitle}>Invite Friends</Text>
             </View>
             <View style={styles.inviteContent}>
-              {/* Friends Dropdown */}
-              <View style={styles.friendsDropdownContainer}>
-                <TouchableOpacity
-                  style={styles.friendsDropdownButton}
-                  onPress={() => setShowFriendsDropdown(!showFriendsDropdown)}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.friendsDropdownButtonContent}>
-                    <Ionicons name="people-outline" size={20} color="#0d9488" />
-                    <Text style={styles.friendsDropdownButtonText}>Friends</Text>
-                    <Ionicons 
-                      name={showFriendsDropdown ? "chevron-up" : "chevron-down"} 
-                      size={20} 
-                      color="#6B7280" 
-                    />
-                  </View>
-                </TouchableOpacity>
-                
-                {showFriendsDropdown && (
-                  <View style={styles.friendsDropdownList}>
-                    {isLoadingFriends ? (
-                      <View style={styles.friendsDropdownLoading}>
-                        <ActivityIndicator size="small" color="#0d9488" />
-                        <Text style={styles.friendsDropdownLoadingText}>Loading friends...</Text>
-                      </View>
-                    ) : friends.length === 0 ? (
-                      <View style={styles.friendsDropdownEmpty}>
-                        <Text style={styles.friendsDropdownEmptyText}>No friends yet</Text>
-                        <Text style={styles.friendsDropdownEmptySubtext}>Add friends from the Friends tab</Text>
-                      </View>
-                    ) : (
-                      <ScrollView 
-                        style={styles.friendsDropdownScroll}
-                        nestedScrollEnabled={true}
-                        showsVerticalScrollIndicator={true}
-                      >
-                        {friends.map((friend, index) => {
-                          const isSelected = selectedFriendEmails.includes(friend.email);
-                          return (
-                            <TouchableOpacity
-                              key={friend.userId || index}
-                              style={[
-                                styles.friendDropdownItem,
-                                isSelected && styles.friendDropdownItemSelected
-                              ]}
-                              onPress={() => handleFriendSelect(friend.email)}
-                              activeOpacity={0.7}
-                            >
-                              <View style={styles.friendDropdownItemContent}>
-                                <View style={[styles.friendDropdownAvatar, { backgroundColor: getAvatarColor(friend.name) }]}>
-                                  <Text style={styles.friendDropdownAvatarText}>
-                                    {getInitials(friend.name)}
-                                  </Text>
-                                </View>
-                                <View style={styles.friendDropdownInfo}>
-                                  <Text style={styles.friendDropdownName}>{friend.name || 'Unknown'}</Text>
-                                  <Text style={styles.friendDropdownEmail}>{friend.email}</Text>
-                                </View>
-                                {isSelected && (
-                                  <Ionicons name="checkmark-circle" size={24} color="#0d9488" />
-                                )}
-                              </View>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </ScrollView>
-                    )}
-                  </View>
-                )}
-              </View>
-
-              {/* Selected Friends Chips */}
-              {selectedFriendEmails.length > 0 && (
-                <View style={styles.selectedFriendsContainer}>
-                  <Text style={styles.selectedFriendsLabel}>Selected:</Text>
-                  <View style={styles.selectedFriendsChips}>
-                    {selectedFriendEmails.map((email, index) => {
-                      const friend = friends.find(f => f.email === email);
-                      return (
-                        <View key={email || index} style={styles.friendChip}>
-                          <Text style={styles.friendChipText}>
-                            {friend?.name || email}
-                          </Text>
-                          <TouchableOpacity
-                            onPress={() => handleRemoveSelectedFriend(email)}
-                            style={styles.friendChipRemove}
-                          >
-                            <Ionicons name="close-circle" size={18} color="#6B7280" />
-                          </TouchableOpacity>
-                        </View>
-                      );
-                    })}
-                  </View>
-                </View>
-              )}
-
               <Text style={styles.inputLabel}>
-                Or enter email addresses (separated by commas)
+                Enter email addresses (separated by commas)
               </Text>
               <TextInput
                 ref={emailInputRef}
@@ -1543,138 +1409,5 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#0d9488',
-  },
-  friendsDropdownContainer: {
-    marginBottom: spacing.md,
-  },
-  friendsDropdownButton: {
-    backgroundColor: '#f9fafb',
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    padding: spacing.md,
-  },
-  friendsDropdownButtonContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  friendsDropdownButtonText: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginLeft: spacing.xs,
-  },
-  friendsDropdownList: {
-    marginTop: 8,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    maxHeight: 180, // Shows ~3 friends before scrolling
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  friendsDropdownScroll: {
-    maxHeight: 180,
-  },
-  friendsDropdownLoading: {
-    padding: spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.xs,
-  },
-  friendsDropdownLoadingText: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginLeft: spacing.xs,
-  },
-  friendsDropdownEmpty: {
-    padding: spacing.md,
-    alignItems: 'center',
-  },
-  friendsDropdownEmptyText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#6B7280',
-    marginBottom: 4,
-  },
-  friendsDropdownEmptySubtext: {
-    fontSize: 12,
-    color: '#9CA3AF',
-  },
-  friendDropdownItem: {
-    padding: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  friendDropdownItemSelected: {
-    backgroundColor: '#ccfbf1',
-  },
-  friendDropdownItemContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  friendDropdownAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  friendDropdownAvatarText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  friendDropdownInfo: {
-    flex: 1,
-  },
-  friendDropdownName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 2,
-  },
-  friendDropdownEmail: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  selectedFriendsContainer: {
-    marginBottom: spacing.md,
-  },
-  selectedFriendsLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: spacing.xs,
-  },
-  selectedFriendsChips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
-  },
-  friendChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ccfbf1',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-    borderRadius: 16,
-    gap: 4,
-  },
-  friendChipText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#0d9488',
-  },
-  friendChipRemove: {
-    marginLeft: 2,
   },
 });
