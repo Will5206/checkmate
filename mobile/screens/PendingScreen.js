@@ -229,9 +229,10 @@ export default function PendingScreen() {
     const isProcessing = processingIds.has(receipt.receiptId);
     const itemCount = receipt.items?.length || 0;
     
-    // Determine sender display text
-    const isUploader = currentUserId && receipt.uploadedBy && currentUserId === receipt.uploadedBy;
+    // Determine sender display text and user role
+    const isUploader = receipt.isUploader || (currentUserId && receipt.uploadedBy && currentUserId === receipt.uploadedBy);
     const senderName = isUploader ? 'You' : (receipt.uploadedByName || 'Unknown');
+    const hasPaid = receipt.hasPaid || false; // Participant has paid
 
     return (
       <View style={styles.receiptCard}>
@@ -268,45 +269,68 @@ export default function PendingScreen() {
 
         {/* Items preview removed for performance - items are loaded on-demand when viewing receipt */}
 
+        {/* PAID Tag for participants who have paid */}
+        {!isUploader && hasPaid && (
+          <View style={styles.paidTag}>
+            <Ionicons name="checkmark-circle" size={16} color="#10B981" />
+            <Text style={styles.paidTagText}>PAID</Text>
+          </View>
+        )}
+
         <View style={styles.actionButtons}>
-          <TouchableOpacity
-            style={[styles.reviewButton, isProcessing && styles.buttonDisabled]}
-            onPress={() => handleReview(receipt)}
-            disabled={isProcessing}
-          >
-            <Ionicons name="eye-outline" size={18} color="#0d9488" />
-            <Text style={styles.reviewButtonText}>Review</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            style={[styles.declineButton, isProcessing && styles.buttonDisabled]}
-            onPress={() => handleDecline(receipt.receiptId)}
-            disabled={isProcessing}
-          >
-            {isProcessing ? (
-              <ActivityIndicator size="small" color="#DC2626" />
-            ) : (
-              <>
-                <Ionicons name="close-circle-outline" size={18} color="#DC2626" />
-                <Text style={styles.declineButtonText}>Decline</Text>
-              </>
-            )}
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            style={[styles.acceptButton, isProcessing && styles.buttonDisabled]}
-            onPress={() => handleAccept(receipt.receiptId)}
-            disabled={isProcessing}
-          >
-            {isProcessing ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <>
-                <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
-                <Text style={styles.acceptButtonText}>Accept</Text>
-              </>
-            )}
-          </TouchableOpacity>
+          {isUploader ? (
+            // Uploader: Only show "Review & Claim items" button
+            <TouchableOpacity
+              style={[styles.reviewButton, isProcessing && styles.buttonDisabled]}
+              onPress={() => handleReview(receipt)}
+              disabled={isProcessing}
+            >
+              <Ionicons name="eye-outline" size={18} color="#0d9488" />
+              <Text style={styles.reviewButtonText}>Review & Claim Items</Text>
+            </TouchableOpacity>
+          ) : (
+            // Participant: Show "Review & Pay" and "Decline" buttons (unless already paid)
+            <>
+              {!hasPaid && (
+                <>
+                  <TouchableOpacity
+                    style={[styles.reviewButton, isProcessing && styles.buttonDisabled]}
+                    onPress={() => handleReview(receipt)}
+                    disabled={isProcessing}
+                  >
+                    <Ionicons name="eye-outline" size={18} color="#0d9488" />
+                    <Text style={styles.reviewButtonText}>Review & Pay</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity
+                    style={[styles.declineButton, isProcessing && styles.buttonDisabled]}
+                    onPress={() => handleDecline(receipt.receiptId)}
+                    disabled={isProcessing}
+                  >
+                    {isProcessing ? (
+                      <ActivityIndicator size="small" color="#DC2626" />
+                    ) : (
+                      <>
+                        <Ionicons name="close-circle-outline" size={18} color="#DC2626" />
+                        <Text style={styles.declineButtonText}>Decline</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </>
+              )}
+              {hasPaid && (
+                // If paid, show a disabled "Review" button (read-only)
+                <TouchableOpacity
+                  style={[styles.reviewButton, styles.buttonDisabled]}
+                  onPress={() => handleReview(receipt)}
+                  disabled={false}
+                >
+                  <Ionicons name="eye-outline" size={18} color="#0d9488" />
+                  <Text style={styles.reviewButtonText}>Review</Text>
+                </TouchableOpacity>
+              )}
+            </>
+          )}
         </View>
       </View>
     );
@@ -589,5 +613,22 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.6,
+  },
+  paidTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D1FAE5',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    alignSelf: 'flex-start',
+    marginBottom: 12,
+    gap: 6,
+  },
+  paidTagText: {
+    color: '#10B981',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
 });

@@ -42,8 +42,8 @@ public class ReceiptDAO {
                                   float totalAmount, float tipAmount, float taxAmount,
                                   String imageUrl) {
         String sql = "INSERT INTO receipts (uploaded_by, merchant_name, date, total_amount, " +
-                     "tip_amount, tax_amount, image_url, status) " +
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')";
+                     "tip_amount, tax_amount, image_url, status, complete) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', FALSE)";
 
         try (Connection conn = dbConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
@@ -228,7 +228,12 @@ public class ReceiptDAO {
             pstmt.setInt(5, quantity);
             
             int affectedRows = pstmt.executeUpdate();
-            return affectedRows > 0;
+            if (affectedRows > 0) {
+                // Update receipt complete status after item assignment
+                updateReceiptCompleteStatus(receiptId);
+                return true;
+            }
+            return false;
         } catch (SQLException e) {
             System.err.println("Error assigning item to user: " + e.getMessage());
             e.printStackTrace();
@@ -244,6 +249,23 @@ public class ReceiptDAO {
      * @return true if unassignment was successful, false otherwise
      */
     public boolean unassignItemFromUser(int itemId, String userId) {
+        // First get receipt_id before deleting
+        String getReceiptSql = "SELECT receipt_id FROM item_assignments WHERE item_id = ? AND user_id = ? LIMIT 1";
+        int receiptId = -1;
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(getReceiptSql)) {
+            pstmt.setInt(1, itemId);
+            pstmt.setString(2, userId);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    receiptId = rs.getInt("receipt_id");
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error getting receipt_id for unassign: " + e.getMessage());
+        }
+        
         String sql = "DELETE FROM item_assignments WHERE item_id = ? AND user_id = ?";
         
         try (Connection conn = dbConnection.getConnection();
@@ -252,7 +274,14 @@ public class ReceiptDAO {
             pstmt.setString(2, userId);
             
             int affectedRows = pstmt.executeUpdate();
-            return affectedRows > 0;
+            if (affectedRows > 0) {
+                // Update receipt complete status after item unassignment
+                if (receiptId > 0) {
+                    updateReceiptCompleteStatus(receiptId);
+                }
+                return true;
+            }
+            return false;
         } catch (SQLException e) {
             System.err.println("Error unassigning item from user: " + e.getMessage());
             e.printStackTrace();
@@ -558,10 +587,18 @@ public class ReceiptDAO {
      * @return List of Receipt objects
      */
     public List<Receipt> getPendingReceiptsForUser(String userId) {
-        // FIX 3: Include both 'pending' and 'accepted' status, exclude completed receipts
-        String sql = "SELECT DISTINCT r.* FROM receipts r " +
-                     "INNER JOIN receipt_participants rp ON r.receipt_id = rp.receipt_id " +
-                     "WHERE rp.user_id = ? AND rp.status IN ('pending', 'accepted') AND r.status != 'completed' " +
+        // Get receipts where:
+        // 1. User is the uploader, OR
+        // 2. User is a participant with status 'pending' or 'accepted' (not declined)
+        // AND complete = FALSE (receipt not yet complete)
+        // Receipts with complete = TRUE appear in History, not Pending
+        String sql = "SELECT DISTINCT r.* FROM (" +
+                     "  SELECT r.* FROM receipts r WHERE r.uploaded_by = ? AND r.complete = FALSE " +
+                     "  UNION " +
+                     "  SELECT r.* FROM receipts r " +
+                     "  INNER JOIN receipt_participants rp ON r.receipt_id = rp.receipt_id " +
+                     "  WHERE rp.user_id = ? AND rp.status IN ('pending', 'accepted') AND r.complete = FALSE" +
+                     ") AS r " +
                      "ORDER BY r.created_at DESC";
         
         List<Receipt> receipts = new ArrayList<>();
@@ -570,14 +607,14 @@ public class ReceiptDAO {
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
             
             pstmt.setString(1, userId);
+            pstmt.setString(2, userId);
 
             try (ResultSet rs = pstmt.executeQuery()) {
                 System.out.println("[ReceiptDAO] Getting pending receipts for user " + userId);
-                // First, collect all receipts from ResultSet
                 while (rs.next()) {
                     Receipt receipt = mapResultSetToReceipt(rs);
                     receipts.add(receipt);
-                    System.out.println("[ReceiptDAO] Collected pending receipt " + receipt.getReceiptId() + " (total so far: " + receipts.size() + ")");
+                    System.out.println("[ReceiptDAO] Collected pending receipt " + receipt.getReceiptId() + " (complete = FALSE, total so far: " + receipts.size() + ")");
                 }
                 System.out.println("[ReceiptDAO] Found total of " + receipts.size() + " pending receipts for user " + userId);
             }
@@ -593,8 +630,8 @@ public class ReceiptDAO {
     }
 
     /**
-     * Get all receipts for a specific user (History/Activity - all receipts except declined).
-     * Shows receipts where the user is a participant with status 'pending', 'accepted', or 'completed'.
+     * Get all receipts for a specific user (History/Activity - completed receipts only).
+     * Shows receipts where complete = TRUE and the user is either the uploader or a participant.
      * Excludes receipts where the user has declined.
      * 
      * @param userId The user's ID (VARCHAR(36))
@@ -605,14 +642,14 @@ public class ReceiptDAO {
         // Show all receipts where:
         // 1. User is the uploader (r.uploaded_by = ?), OR
         // 2. User is a participant and hasn't declined (rp.user_id = ? AND rp.status != 'declined')
+        // AND complete = TRUE (receipt is completed)
         // Use UNION to avoid duplicate rows from JOIN
-        // Get receipts where user is uploader OR participant (not declined)
         String sql = "SELECT DISTINCT r.* FROM (" +
-                     "  SELECT r.* FROM receipts r WHERE r.uploaded_by = ? " +
+                     "  SELECT r.* FROM receipts r WHERE r.uploaded_by = ? AND r.complete = TRUE " +
                      "  UNION " +
                      "  SELECT r.* FROM receipts r " +
                      "  INNER JOIN receipt_participants rp ON r.receipt_id = rp.receipt_id " +
-                     "  WHERE rp.user_id = ? AND rp.status != 'declined'" +
+                     "  WHERE rp.user_id = ? AND rp.status != 'declined' AND r.complete = TRUE" +
                      ") AS r " +
                      "ORDER BY r.created_at DESC";
         
@@ -643,7 +680,7 @@ public class ReceiptDAO {
                     if (!receiptIds.contains(receiptId)) {
                         receiptIds.add(receiptId);
                         receipts.add(receipt);
-                        System.out.println("[ReceiptDAO] STEP C8: Added receipt " + receiptId + " to list (total: " + receipts.size() + ")");
+                        System.out.println("[ReceiptDAO] STEP C8: Added receipt " + receiptId + " to History (complete = TRUE, total: " + receipts.size() + ")");
                     } else {
                         System.out.println("[ReceiptDAO] STEP C8-SKIP: Receipt " + receiptId + " already in list, skipping duplicate");
                     }
@@ -658,7 +695,7 @@ public class ReceiptDAO {
         // OPTIMIZATION: Don't load items here - only load basic receipt info for list view
         // Items will be loaded on-demand when user clicks to view receipt details
         System.out.println("[ReceiptDAO] STEP C10: Skipping item loading for list view (optimization)");
-        System.out.println("[ReceiptDAO] STEP C11: Returning " + receipts.size() + " receipts without items");
+        System.out.println("[ReceiptDAO] STEP C11: Returning " + receipts.size() + " completed receipts (complete = TRUE) without items");
         return receipts;
     }
 
@@ -1067,7 +1104,89 @@ public class ReceiptDAO {
     }
 
     /**
+     * Update the complete status of a receipt based on whether all items are claimed.
+     * Sets complete = TRUE if all items are claimed, FALSE otherwise.
+     * 
+     * @param receiptId The receipt ID
+     * @return true if receipt is now complete, false otherwise
+     */
+    public boolean updateReceiptCompleteStatus(int receiptId) {
+        boolean allClaimed = areAllItemsClaimed(receiptId);
+        
+        String sql = "UPDATE receipts SET complete = ? WHERE receipt_id = ?";
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setBoolean(1, allClaimed);
+            pstmt.setInt(2, receiptId);
+            
+            int affectedRows = pstmt.executeUpdate();
+            if (affectedRows > 0) {
+                System.out.println("[ReceiptDAO] Updated receipt " + receiptId + " complete status to " + allClaimed);
+                return allClaimed;
+            }
+        } catch (SQLException e) {
+            System.err.println("Error updating receipt complete status: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return false;
+    }
+
+    /**
+     * Check if all items in a receipt are claimed by users.
+     * Counts all item assignments (including paid items) to determine if all items are claimed.
+     * 
+     * @param receiptId The receipt ID
+     * @return true if all items are fully claimed, false otherwise
+     */
+    public boolean areAllItemsClaimed(int receiptId) {
+        // Get all items for this receipt
+        List<ReceiptItem> items = getReceiptItems(receiptId);
+        if (items.isEmpty()) {
+            // No items means not all claimed - receipt should stay in Pending
+            System.out.println("[ReceiptDAO] Receipt " + receiptId + " has no items - not all claimed (stays in Pending)");
+            return false;
+        }
+        
+        // Check each item to see if total claimed quantity equals item quantity
+        // Count all assignments (including paid items) - they were claimed before payment
+        String sql = "SELECT COALESCE(SUM(quantity), 0) as total_claimed " +
+                     "FROM item_assignments " +
+                     "WHERE item_id = ?";
+        
+        for (ReceiptItem item : items) {
+            int itemQuantity = item.getQuantity();
+            int totalClaimed = 0;
+            
+            try (Connection conn = dbConnection.getConnection();
+                 PreparedStatement pstmt = conn.prepareStatement(sql)) {
+                pstmt.setInt(1, item.getItemId());
+                try (ResultSet rs = pstmt.executeQuery()) {
+                    if (rs.next()) {
+                        totalClaimed = rs.getInt("total_claimed");
+                    }
+                }
+            } catch (SQLException e) {
+                System.err.println("Error checking if all items claimed: " + e.getMessage());
+                return false;
+            }
+            
+            // If any item is not fully claimed, return false
+            if (totalClaimed < itemQuantity) {
+                System.out.println("[ReceiptDAO] Receipt " + receiptId + " item " + item.getItemId() + ": claimed " + totalClaimed + "/" + itemQuantity + " - not all claimed");
+                return false;
+            }
+        }
+        
+        System.out.println("[ReceiptDAO] Receipt " + receiptId + ": ALL items are fully claimed - can move to History");
+        return true; // All items are fully claimed
+    }
+
+    /**
      * Check if all participants have paid their full amount and mark receipt as completed if so.
+     * Also checks if all items are claimed before marking as completed.
      * 
      * FIX 3D: When receipt is completed, update all participants status to 'completed'
      * so receipt moves to History for everyone.
@@ -1076,6 +1195,10 @@ public class ReceiptDAO {
      * @return true if receipt was marked as completed, false otherwise
      */
     public boolean checkAndMarkReceiptCompleted(int receiptId) {
+        // First check if all items are claimed
+        if (!areAllItemsClaimed(receiptId)) {
+            return false; // Not all items are claimed yet
+        }
         List<Map<String, Object>> participants = getParticipantsWithPaymentStatus(receiptId);
         
         if (participants.isEmpty()) {

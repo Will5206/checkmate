@@ -795,8 +795,8 @@ export default function BillReview() {
           </View>
         </View>
 
-        {/* Your Portion - Payment Section (only shown when viewing from Activity and not paid) */}
-        {isFromActivity && !userHasPaid && (
+        {/* Your Portion - Payment Section (only shown when viewing from Activity, not paid, and NOT uploader) */}
+        {isFromActivity && !userHasPaid && !isUploader && (
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>Your Portion</Text>
@@ -814,6 +814,25 @@ export default function BillReview() {
                   <Ionicons name="card-outline" size={20} color="#fff" />
                   <Text style={styles.payButtonText}>Pay ${owedAmount.toFixed(2)}</Text>
                 </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        )}
+        
+        {/* Uploader Info Section (only shown for uploader) */}
+        {isFromActivity && isUploader && (
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>Your Items</Text>
+            </View>
+            <View style={styles.cardContent}>
+              {Object.keys(itemAssignments).length === 0 ? (
+                <Text style={styles.hintText}>Tap items above to claim them</Text>
+              ) : (
+                <Text style={styles.hintText}>
+                  You've claimed {Object.keys(itemAssignments).length} item{Object.keys(itemAssignments).length !== 1 ? 's' : ''}. 
+                  Waiting for others to claim and pay their items.
+                </Text>
               )}
             </View>
           </View>

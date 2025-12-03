@@ -148,10 +148,8 @@ export default function ActivityScreen() {
   };
 
   const ReceiptCard = ({ receipt }) => {
-    const status = receipt.status || 'pending';
-    const isCompleted = status === 'completed';
-    const isAccepted = status === 'accepted' || isCompleted;
-    const userHasPaid = receipt.userHasPaid || false; // Check if current user has paid
+    // All receipts in History should be completed (all items claimed)
+    // So we always show "Completed" status
     const itemCount = receipt.items ? receipt.items.length : 0;
     
     // Determine sender display text
@@ -168,9 +166,9 @@ export default function ActivityScreen() {
           <View style={styles.cardLeft}>
             <View style={styles.iconContainer}>
               <Ionicons 
-                name={isAccepted ? "checkmark-circle" : "time-outline"} 
+                name="checkmark-circle" 
                 size={20} 
-                color={isAccepted ? "#0d9488" : "#6B7280"} 
+                color="#0d9488" 
               />
             </View>
             <View style={styles.cardInfo}>
@@ -202,19 +200,9 @@ export default function ActivityScreen() {
                 </View>
               </View>
               <View style={styles.statusSection}>
-                <View style={[
-                  styles.paidBadge, 
-                  !isAccepted && !userHasPaid && styles.pendingBadge,
-                  isCompleted && styles.completedBadge,
-                  userHasPaid && !isCompleted && styles.paidStatusBadge
-                ]}>
-                  <Text style={[
-                    styles.paidBadgeText, 
-                    !isAccepted && !userHasPaid && styles.pendingBadgeText,
-                    isCompleted && styles.completedBadgeText,
-                    userHasPaid && !isCompleted && styles.paidStatusBadgeText
-                  ]}>
-                    {isCompleted ? 'Completed' : userHasPaid ? 'Paid' : isAccepted ? 'Accepted' : 'Pending'}
+                <View style={styles.completedBadge}>
+                  <Text style={styles.completedBadgeText}>
+                    Completed
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />

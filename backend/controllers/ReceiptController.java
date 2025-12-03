@@ -343,14 +343,42 @@ public class ReceiptController {
                 
                 // Build receipt JSON with all details including items
                 JSONObject receiptJson = buildReceiptJson(receipt);
-                receiptJson.put("status", receiptService.getReceiptStatus(userIdStr, receiptId));
+                
+                // Get status using String userId version (explicitly call String overload)
+                String receiptStatus = receiptService.getReceiptStatus(userIdStr, receiptId);
+                receiptJson.put("status", receiptStatus != null ? receiptStatus : "pending");
+                
+                // Add isUploader and hasPaid flags for frontend
+                // Note: uploadedBy and participantStatus are already defined above
+                boolean isUploader = uploadedBy != null && uploadedBy.equals(userIdStr);
+                receiptJson.put("isUploader", isUploader);
+                
+                if (!isUploader) {
+                    if (participantStatus != null && !participantStatus.equals("declined")) {
+                        float paidAmount = receiptDAO.getPaidAmount(receiptId, userIdStr);
+                        receiptJson.put("hasPaid", paidAmount > 0.01f);
+                        receiptJson.put("paidAmount", paidAmount);
+                    } else {
+                        receiptJson.put("hasPaid", false);
+                        receiptJson.put("paidAmount", 0.0f);
+                    }
+                } else {
+                    receiptJson.put("hasPaid", false);
+                    receiptJson.put("paidAmount", 0.0f);
+                }
                 
                 JSONObject resp = new JSONObject()
                     .put("success", true)
                     .put("receipt", receiptJson);
                 
                 sendJson(exchange, 200, resp);
+            } catch (NumberFormatException e) {
+                sendJson(exchange, 400, new JSONObject()
+                    .put("success", false)
+                    .put("message", "Invalid receiptId format. Expected a number."));
             } catch (Exception e) {
+                System.err.println("[ReceiptController] ViewReceiptHandler error: " + e.getMessage());
+                e.printStackTrace();
                 sendJson(exchange, 400, new JSONObject()
                     .put("success", false)
                     .put("message", "Invalid parameters: " + e.getMessage()));
@@ -390,13 +418,30 @@ public class ReceiptController {
                 List<Receipt> pendingReceipts = receiptService.getPendingReceipts(userIdStr);
                 System.out.println("[ReceiptController] ListPendingReceiptsHandler - Found " + pendingReceipts.size() + " pending receipts for user " + userIdStr);
                 
+                ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
                 JSONArray receiptsArray = new JSONArray();
                 for (Receipt receipt : pendingReceipts) {
                     JSONObject receiptJson = buildReceiptJson(receipt);
                     // Get status using String userId
-                    String status = receiptService.getReceiptDAO().getParticipantStatus(
+                    String status = receiptDAO.getParticipantStatus(
                         receipt.getReceiptId(), userIdStr);
                     receiptJson.put("status", status != null ? status : "pending");
+                    
+                    // Check if user is uploader
+                    String uploadedBy = receiptDAO.getReceiptUploadedBy(receipt.getReceiptId());
+                    boolean isUploader = uploadedBy != null && uploadedBy.equals(userIdStr);
+                    receiptJson.put("isUploader", isUploader);
+                    
+                    // Get participant payment info (if not uploader)
+                    if (!isUploader && status != null && !status.equals("declined")) {
+                        float paidAmount = receiptDAO.getPaidAmount(receipt.getReceiptId(), userIdStr);
+                        receiptJson.put("hasPaid", paidAmount > 0.01f);
+                        receiptJson.put("paidAmount", paidAmount);
+                    } else {
+                        receiptJson.put("hasPaid", false);
+                        receiptJson.put("paidAmount", 0.0f);
+                    }
+                    
                     receiptsArray.put(receiptJson);
                 }
                 
