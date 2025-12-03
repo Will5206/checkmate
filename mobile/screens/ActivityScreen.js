@@ -150,11 +150,13 @@ export default function ActivityScreen() {
   const ReceiptCard = ({ receipt }) => {
     // All receipts in History should be completed (all items claimed)
     // So we always show "Completed" status
-    const itemCount = receipt.items ? receipt.items.length : 0;
+    // Use number_of_items from backend, fallback to items array length if not available
+    const itemCount = receipt.numberOfItems || (receipt.items ? receipt.items.length : 0);
     
     // Determine sender display text
     const isUploader = currentUserId && receipt.uploadedBy && currentUserId === receipt.uploadedBy;
-    const senderName = isUploader ? 'You' : (receipt.uploadedByName || 'Unknown');
+    // Use senderName from backend, fallback to uploadedByName or 'Unknown'
+    const senderName = isUploader ? 'You' : (receipt.senderName || receipt.uploadedByName || 'Unknown');
     
     return (
       <TouchableOpacity

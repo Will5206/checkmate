@@ -16,6 +16,8 @@ public class Receipt {
     private float taxAmount;
     private String imageUrl;
     private String status;
+    private String senderName; // Name of the user who uploaded the receipt
+    private int numberOfItems; // Count of items on the receipt
 
     private List<ReceiptItem> items;
 
@@ -48,9 +50,13 @@ public class Receipt {
     public String getImageUrl() { return imageUrl; }
     public String getStatus() { return status; }
     public List<ReceiptItem> getItems() { return new ArrayList<>(items); }
+    public String getSenderName() { return senderName; }
+    public int getNumberOfItems() { return numberOfItems; }
 
     // Setters
     public void setStatus(String status) { this.status = status; }
+    public void setSenderName(String senderName) { this.senderName = senderName; }
+    public void setNumberOfItems(int numberOfItems) { this.numberOfItems = numberOfItems; }
 
     // Methods from UML
     public void addItem(ReceiptItem item) {

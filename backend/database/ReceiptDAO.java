@@ -41,9 +41,23 @@ public class ReceiptDAO {
     public Receipt createReceipt(String uploadedBy, String merchantName, Date date,
                                   float totalAmount, float tipAmount, float taxAmount,
                                   String imageUrl) {
+        // Get sender name from users table
+        String senderName = null;
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement nameStmt = conn.prepareStatement("SELECT name FROM users WHERE user_id = ?")) {
+            nameStmt.setString(1, uploadedBy);
+            try (ResultSet rs = nameStmt.executeQuery()) {
+                if (rs.next()) {
+                    senderName = rs.getString("name");
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error getting sender name: " + e.getMessage());
+        }
+        
         String sql = "INSERT INTO receipts (uploaded_by, merchant_name, date, total_amount, " +
-                     "tip_amount, tax_amount, image_url, status, complete) " +
-                     "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', FALSE)";
+                     "tip_amount, tax_amount, image_url, status, complete, sender_name, number_of_items) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', FALSE, ?, 0)";
 
         try (Connection conn = dbConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
@@ -59,6 +73,7 @@ public class ReceiptDAO {
             pstmt.setBigDecimal(5, java.math.BigDecimal.valueOf(tipAmount));
             pstmt.setBigDecimal(6, java.math.BigDecimal.valueOf(taxAmount));
             pstmt.setString(7, imageUrl);
+            pstmt.setString(8, senderName);
 
             int affectedRows = pstmt.executeUpdate();
 
@@ -728,6 +743,10 @@ public class ReceiptDAO {
                 try (ResultSet generatedKeys = pstmt.getGeneratedKeys()) {
                     if (generatedKeys.next()) {
                         int itemId = generatedKeys.getInt(1);
+                        
+                        // Update number_of_items in receipts table
+                        updateReceiptItemCount(receiptId);
+                        
                         return getReceiptItemById(itemId);
                     }
                 }
@@ -738,6 +757,24 @@ public class ReceiptDAO {
         }
 
         return null;
+    }
+    
+    /**
+     * Update the number_of_items count for a receipt.
+     * 
+     * @param receiptId The receipt ID
+     */
+    public void updateReceiptItemCount(int receiptId) {
+        String sql = "UPDATE receipts SET number_of_items = (SELECT COUNT(*) FROM receipt_items WHERE receipt_id = ?) WHERE receipt_id = ?";
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, receiptId);
+            pstmt.setInt(2, receiptId);
+            pstmt.executeUpdate();
+        } catch (SQLException e) {
+            System.err.println("Error updating receipt item count: " + e.getMessage());
+        }
     }
 
     /**
@@ -956,11 +993,15 @@ public class ReceiptDAO {
         float taxAmount = rs.getBigDecimal("tax_amount").floatValue();
         String imageUrl = rs.getString("image_url");
         String status = rs.getString("status");
+        String senderName = rs.getString("sender_name");
+        int numberOfItems = rs.getInt("number_of_items");
 
         // Create Receipt - note: uploadedBy is int in model but String in DB
         // We'll use 0 as placeholder and handle conversion in service layer
         // The actual uploadedBy can be retrieved via getReceiptUploadedBy() when needed
         Receipt receipt = new Receipt(receiptId, 0, merchantName, date, totalAmount, tipAmount, taxAmount, imageUrl, status);
+        receipt.setSenderName(senderName);
+        receipt.setNumberOfItems(numberOfItems);
         
         return receipt;
     }

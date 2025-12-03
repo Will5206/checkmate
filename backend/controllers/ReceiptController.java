@@ -634,6 +634,9 @@ public class ReceiptController {
                     }
                 }
                 
+                // Update number_of_items in receipts table after all items are added
+                receiptDAO.updateReceiptItemCount(receipt.getReceiptId());
+                
                 // Reload receipt with items
                 receipt = receiptDAO.getReceiptById(receipt.getReceiptId());
                 
@@ -824,7 +827,9 @@ public class ReceiptController {
             .put("tipAmount", receipt.getTipAmount())
             .put("taxAmount", receipt.getTaxAmount())
             .put("imageUrl", receipt.getImageUrl())
-            .put("status", receipt.getStatus());
+            .put("status", receipt.getStatus())
+            .put("senderName", receipt.getSenderName() != null ? receipt.getSenderName() : "")
+            .put("numberOfItems", receipt.getNumberOfItems());
         
         // Add items array
         JSONArray itemsArray = new JSONArray();

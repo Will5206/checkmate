@@ -227,11 +227,13 @@ export default function PendingScreen() {
 
   const PendingReceiptCard = ({ receipt }) => {
     const isProcessing = processingIds.has(receipt.receiptId);
-    const itemCount = receipt.items?.length || 0;
+    // Use number_of_items from backend, fallback to items array length if not available
+    const itemCount = receipt.numberOfItems || receipt.items?.length || 0;
     
     // Determine sender display text and user role
     const isUploader = receipt.isUploader || (currentUserId && receipt.uploadedBy && currentUserId === receipt.uploadedBy);
-    const senderName = isUploader ? 'You' : (receipt.uploadedByName || 'Unknown');
+    // Use senderName from backend, fallback to uploadedByName or 'Unknown'
+    const senderName = isUploader ? 'You' : (receipt.senderName || receipt.uploadedByName || 'Unknown');
     const hasPaid = receipt.hasPaid || false; // Participant has paid
 
     return (
