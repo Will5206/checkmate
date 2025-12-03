@@ -46,10 +46,72 @@ def ensure_jpeg(input_path: str) -> str:
         return tmp.name
 
 
+def crop_to_content(input_path: str) -> Image.Image:
+    """
+    Crop image to its content by treating very light pixels as background.
+    
+    Args:
+        input_path: Path to the input image
+        
+    Returns:
+        Cropped PIL Image
+    """
+    img = Image.open(input_path)
+    gray = img.convert("L")
+    # Treat very light pixels as background
+    bw = gray.point(lambda x: 0 if x > 240 else 255, mode="1")
+    bbox = bw.getbbox()
+    if bbox is None:
+        return img
+    return img.crop(bbox)
+
+
+def ensure_cropped_jpeg(input_path: str) -> str:
+    """
+    Crop image to content, upscale to make text larger, and ensure it's saved as JPEG.
+    This simulates taking a "closer" photo by cropping and enlarging the receipt.
+    
+    Args:
+        input_path: Path to the input image
+        
+    Returns:
+        Path to the cropped and upscaled JPEG temporary file
+    """
+    cropped = crop_to_content(input_path)
+    cropped = cropped.convert("RGB")
+    
+    # Upscale the cropped image to make text larger and easier to read
+    # Target minimum dimensions to ensure text is readable
+    # If the cropped image is smaller than these, scale it up proportionally
+    min_width = 2000
+    min_height = 1500
+    
+    width, height = cropped.size
+    
+    # Calculate scale factor to reach minimum dimensions
+    scale_w = min_width / width if width < min_width else 1.0
+    scale_h = min_height / height if height < min_height else 1.0
+    scale_factor = max(scale_w, scale_h)
+    
+    # Only upscale if needed (don't downscale large images)
+    if scale_factor > 1.0:
+        # Use LANCZOS resampling for better quality when upscaling
+        new_width = int(width * scale_factor)
+        new_height = int(height * scale_factor)
+        cropped = cropped.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        print(f"Upscaled cropped image from {width}x{height} to {new_width}x{new_height} (scale: {scale_factor:.2f}x)", file=sys.stderr)
+    
+    tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+    cropped.save(tmp.name, format="JPEG", quality=95)  # Higher quality for better text recognition
+    return tmp.name
+
+
 # Image path from Java ReceiptController
 original_path = sys.argv[1]
 jpeg_path = ensure_jpeg(original_path)
-base64_image = encode_image(jpeg_path)
+# Crop the image to content (removes excess white space/background)
+cropped_jpeg_path = ensure_cropped_jpeg(jpeg_path)
+base64_image = encode_image(cropped_jpeg_path)
 
 prompt = """
 Extract the receipt information from the image.
