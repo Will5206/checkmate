@@ -1100,10 +1100,13 @@ export default function BillReview() {
                 {isFromCamera && (
                   <TouchableOpacity
                     style={styles.secondaryButton}
-                    onPress={() => navigation.navigate('Home')}
+                    onPress={() => {
+                      console.log('Re-Scan Receipt pressed - navigating to ScanReceipt');
+                      navigation.replace('ScanReceipt');
+                    }}
                   >
                     <Ionicons name="camera-outline" size={20} color={colors.primary} style={styles.buttonIcon} />
-                    <Text style={styles.secondaryButtonText}>Scan Another Receipt</Text>
+                    <Text style={styles.secondaryButtonText}>Re-Scan Receipt</Text>
                   </TouchableOpacity>
                 )}
               </View>
