@@ -23,6 +23,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -367,8 +368,9 @@ public class ReceiptController {
                 
                 // Use String userId version (for UUIDs)
                 List<Receipt> pendingReceipts = receiptService.getPendingReceipts(userIdStr);
-                JSONArray receiptsArray = new JSONArray();
+                System.out.println("[ReceiptController] ListPendingReceiptsHandler - Found " + pendingReceipts.size() + " pending receipts for user " + userIdStr);
                 
+                JSONArray receiptsArray = new JSONArray();
                 for (Receipt receipt : pendingReceipts) {
                     JSONObject receiptJson = buildReceiptJson(receipt);
                     // Get status using String userId
@@ -377,6 +379,8 @@ public class ReceiptController {
                     receiptJson.put("status", status != null ? status : "pending");
                     receiptsArray.put(receiptJson);
                 }
+                
+                System.out.println("[ReceiptController] ListPendingReceiptsHandler - Returning " + receiptsArray.length() + " receipts in JSON array");
                 
                 JSONObject resp = new JSONObject()
                     .put("success", true)
@@ -539,8 +543,11 @@ public class ReceiptController {
                     }
                 }
                 
-                // Add uploader as participant (so they can claim items and pay)
+                // Add uploader as participant with 'accepted' status (so they can see it immediately in activity)
+                // This ensures the uploader can see and interact with their receipt right away
                 receiptDAO.addReceiptParticipant(receipt.getReceiptId(), userIdStr);
+                // Update uploader's status to 'accepted' so they see it in activity screen
+                receiptDAO.updateParticipantStatus(receipt.getReceiptId(), userIdStr, "accepted");
                 validParticipantIds.add(userIdStr);
                 
                 // Convert participant emails to user IDs and add them
@@ -676,6 +683,8 @@ public class ReceiptController {
                 List<Receipt> receipts = receiptService.getAllReceiptsForUser(userIdStr);
                 ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
                 
+                System.out.println("[ReceiptController] GetActivityReceiptsHandler - Found " + receipts.size() + " receipts for user " + userIdStr);
+                
                 JSONArray receiptsArray = new JSONArray();
                 for (Receipt receipt : receipts) {
                     JSONObject receiptJson = buildReceiptJson(receipt);
@@ -683,7 +692,20 @@ public class ReceiptController {
                     // Add payment status for this user
                     float owedAmount = receiptDAO.calculateUserOwedAmount(receipt.getReceiptId(), userIdStr);
                     float paidAmount = receiptDAO.getPaidAmount(receipt.getReceiptId(), userIdStr);
-                    boolean hasPaid = paidAmount >= owedAmount - 0.01f; // Allow small rounding differences
+                    
+                    // Only mark as paid if:
+                    // 1. User has items claimed (owedAmount > 0.01) AND has paid for them
+                    // 2. OR user has no items claimed (owedAmount <= 0.01) but has made a payment (paidAmount > 0.01)
+                    // This prevents false positives when user hasn't claimed anything yet
+                    boolean hasPaid = false;
+                    if (owedAmount > 0.01f) {
+                        // User has items claimed - check if they've paid for them
+                        hasPaid = paidAmount >= owedAmount - 0.01f; // Allow small rounding differences
+                    } else if (paidAmount > 0.01f) {
+                        // User has no items claimed but has made a payment (edge case)
+                        hasPaid = true;
+                    }
+                    // Otherwise: hasPaid = false (user hasn't claimed anything and hasn't paid)
                     
                     receiptJson.put("userOwedAmount", owedAmount);
                     receiptJson.put("userPaidAmount", paidAmount);
@@ -691,6 +713,8 @@ public class ReceiptController {
                     
                     receiptsArray.put(receiptJson);
                 }
+                
+                System.out.println("[ReceiptController] GetActivityReceiptsHandler - Returning " + receiptsArray.length() + " receipts in JSON array");
                 
                 JSONObject resp = new JSONObject()
                     .put("success", true)
@@ -928,49 +952,36 @@ public class ReceiptController {
                 Map<Integer, Integer> assignments = receiptDAO.getItemAssignmentsForUser(receiptId, userIdStr);
                 float owedAmount = receiptDAO.calculateUserOwedAmount(receiptId, userIdStr);
                 
-                // Get all item assignments for receipt (to show payment status)
-                List<Map<String, Object>> allAssignments = receiptDAO.getAllItemAssignmentsForReceipt(receiptId);
-                
                 System.out.println("[ReceiptController] Found " + assignments.size() + " item assignments, owedAmount: " + owedAmount);
                 
-                // Build assignments JSON with payment info
+                // Build assignments JSON
                 JSONObject assignmentsJson = new JSONObject();
                 for (Map.Entry<Integer, Integer> entry : assignments.entrySet()) {
                     assignmentsJson.put(String.valueOf(entry.getKey()), entry.getValue());
                 }
                 
-                // Build item payment info (which items are paid and by whom)
-                // Group by itemId - if ANY assignment for an item is paid, the item is paid
+                // Get item payment info from receipt_items table (new approach)
+                Map<Integer, Map<String, Object>> itemPaymentMap = receiptDAO.getItemPaymentInfoForReceipt(receiptId);
+                
+                // Build item payment info JSON with payer names
                 JSONObject itemPaymentInfo = new JSONObject();
-                Map<Integer, Map<String, Object>> itemPaymentMap = new HashMap<>();
-                
-                for (Map<String, Object> assignment : allAssignments) {
-                    int itemId = (Integer) assignment.get("itemId");
-                    Boolean isPaid = (Boolean) assignment.get("isPaid");
-                    if (isPaid && !itemPaymentMap.containsKey(itemId)) {
-                        // This item is paid - get the payer info
-                        String paidByUserId = (String) assignment.get("paidBy");
-                        // Get payer's name
-                        models.User payer = userDAO.findUserById(paidByUserId);
-                        String payerName = payer != null ? payer.getName() : "Unknown";
-                        
-                        Map<String, Object> paymentInfo = new HashMap<>();
-                        paymentInfo.put("paidBy", paidByUserId);
-                        paymentInfo.put("payerName", payerName);
-                        paymentInfo.put("paidAt", assignment.get("paidAt"));
-                        itemPaymentMap.put(itemId, paymentInfo);
-                    }
-                }
-                
-                // Convert to JSONObject
                 for (Map.Entry<Integer, Map<String, Object>> entry : itemPaymentMap.entrySet()) {
-                    Map<String, Object> paymentInfo = entry.getValue();
+                    int itemId = entry.getKey();
+                    Map<String, Object> paymentData = entry.getValue();
+                    String paidByUserId = (String) paymentData.get("paidBy");
+                    
+                    // Get payer's name
+                    models.User payer = userDAO.findUserById(paidByUserId);
+                    String payerName = payer != null ? payer.getName() : "Unknown";
+                    
                     JSONObject paymentJson = new JSONObject()
-                        .put("paidBy", paymentInfo.get("paidBy"))
-                        .put("payerName", paymentInfo.get("payerName"))
-                        .put("paidAt", paymentInfo.get("paidAt"));
-                    itemPaymentInfo.put(String.valueOf(entry.getKey()), paymentJson);
+                        .put("paidBy", paidByUserId)
+                        .put("payerName", payerName)
+                        .put("paidAt", paymentData.get("paidAt"));
+                    itemPaymentInfo.put(String.valueOf(itemId), paymentJson);
                 }
+                
+                System.out.println("[ReceiptController] Found payment info for " + itemPaymentInfo.length() + " items");
                 
                 JSONObject resp = new JSONObject()
                     .put("success", true)
@@ -1176,18 +1187,26 @@ public class ReceiptController {
                 models.User payer = userDAO.findUserById(userIdStr);
                 String payerName = payer != null ? payer.getName() : "You";
                 
-                // Build item payment info for items that were just marked as paid
-                // This avoids frontend needing to reload all assignments
+                // Get item payment info from receipt_items table (after marking as paid)
+                // This includes all items that are now paid, not just the user's assignments
+                Map<Integer, Map<String, Object>> itemPaymentMap = receiptDAO.getItemPaymentInfoForReceipt(receiptId);
+                
+                // Build item payment info JSON with payer names
                 JSONObject itemPaymentInfo = new JSONObject();
-                Map<Integer, Integer> userAssignments = receiptDAO.getItemAssignmentsForUser(receiptId, userIdStr);
-                long currentTime = System.currentTimeMillis();
-                for (Map.Entry<Integer, Integer> entry : userAssignments.entrySet()) {
+                for (Map.Entry<Integer, Map<String, Object>> entry : itemPaymentMap.entrySet()) {
                     int itemId = entry.getKey();
-                    JSONObject paymentInfo = new JSONObject()
-                        .put("paidBy", userIdStr)
-                        .put("payerName", payerName)
-                        .put("paidAt", currentTime);
-                    itemPaymentInfo.put(String.valueOf(itemId), paymentInfo);
+                    Map<String, Object> paymentData = entry.getValue();
+                    String paidByUserId = (String) paymentData.get("paidBy");
+                    
+                    // Get payer's name (might be different user if they paid for this item)
+                    models.User itemPayer = userDAO.findUserById(paidByUserId);
+                    String itemPayerName = itemPayer != null ? itemPayer.getName() : "Unknown";
+                    
+                    JSONObject paymentJson = new JSONObject()
+                        .put("paidBy", paidByUserId)
+                        .put("payerName", itemPayerName)
+                        .put("paidAt", paymentData.get("paidAt"));
+                    itemPaymentInfo.put(String.valueOf(itemId), paymentJson);
                 }
                 
                 JSONObject resp = new JSONObject()

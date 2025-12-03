@@ -298,9 +298,30 @@ public class ReceiptDAO {
      * @return List of maps containing item_id, user_id, quantity, paid_by, paid_at
      */
     public List<Map<String, Object>> getAllItemAssignmentsForReceipt(int receiptId) {
-        String sql = "SELECT item_id, user_id, quantity, paid_by, paid_at " +
+        // First check if paid_by column exists, if not, use a simpler query
+        String sql = "SELECT item_id, user_id, quantity " +
                      "FROM item_assignments " +
                      "WHERE receipt_id = ?";
+        
+        // Try to include paid_by and paid_at if they exist
+        try (Connection conn = dbConnection.getConnection()) {
+            // Check if paid_by column exists
+            java.sql.DatabaseMetaData metaData = conn.getMetaData();
+            try (java.sql.ResultSet columns = metaData.getColumns(null, null, "item_assignments", "paid_by")) {
+                if (columns.next()) {
+                    // Column exists, use full query
+                    sql = "SELECT item_id, user_id, quantity, paid_by, paid_at " +
+                          "FROM item_assignments " +
+                          "WHERE receipt_id = ?";
+                }
+            } catch (SQLException e) {
+                // Column doesn't exist, use simple query (will be handled below)
+                System.out.println("Note: paid_by column doesn't exist yet. Run migration script: scripts/database/migrate_add_item_payment_tracking.sql");
+            }
+        } catch (SQLException e) {
+            System.err.println("Error checking for paid_by column: " + e.getMessage());
+        }
+        
         List<Map<String, Object>> assignments = new ArrayList<>();
         
         try (Connection conn = dbConnection.getConnection();
@@ -313,11 +334,21 @@ public class ReceiptDAO {
                     assignment.put("itemId", rs.getInt("item_id"));
                     assignment.put("userId", rs.getString("user_id"));
                     assignment.put("quantity", rs.getInt("quantity"));
-                    String paidBy = rs.getString("paid_by");
-                    assignment.put("paidBy", paidBy);
-                    Timestamp paidAt = rs.getTimestamp("paid_at");
-                    assignment.put("paidAt", paidAt != null ? paidAt.getTime() : null);
-                    assignment.put("isPaid", paidBy != null);
+                    
+                    // Try to get paid_by and paid_at if they exist
+                    try {
+                        String paidBy = rs.getString("paid_by");
+                        assignment.put("paidBy", paidBy);
+                        Timestamp paidAt = rs.getTimestamp("paid_at");
+                        assignment.put("paidAt", paidAt != null ? paidAt.getTime() : null);
+                        assignment.put("isPaid", paidBy != null);
+                    } catch (SQLException e) {
+                        // Columns don't exist, set defaults
+                        assignment.put("paidBy", null);
+                        assignment.put("paidAt", null);
+                        assignment.put("isPaid", false);
+                    }
+                    
                     assignments.add(assignment);
                 }
             }
@@ -330,17 +361,20 @@ public class ReceiptDAO {
     }
 
     /**
-     * Mark all items assigned to a user as paid.
+     * Mark all items assigned to a user as paid in receipt_items table.
      * Called when a user pays for their portion of a receipt.
      * 
      * @param receiptId The receipt ID
      * @param userId The user ID who is paying
-     * @return Number of item assignments marked as paid
+     * @return Number of items marked as paid
      */
     public int markItemsAsPaid(int receiptId, String userId) {
-        String sql = "UPDATE item_assignments " +
-                     "SET paid_by = ?, paid_at = CURRENT_TIMESTAMP " +
-                     "WHERE receipt_id = ? AND user_id = ? AND paid_by IS NULL";
+        // Mark items in receipt_items table where the user has claimed them
+        // Only mark items that aren't already paid
+        String sql = "UPDATE receipt_items ri " +
+                     "INNER JOIN item_assignments ia ON ri.item_id = ia.item_id " +
+                     "SET ri.paid_by = ?, ri.paid_at = CURRENT_TIMESTAMP " +
+                     "WHERE ri.receipt_id = ? AND ia.user_id = ? AND ri.paid_by IS NULL";
         
         try (Connection conn = dbConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -349,12 +383,50 @@ public class ReceiptDAO {
             pstmt.setString(3, userId);
             
             int affectedRows = pstmt.executeUpdate();
+            System.out.println("Marked " + affectedRows + " items as paid in receipt_items for user " + userId);
             return affectedRows;
         } catch (SQLException e) {
-            System.err.println("Error marking items as paid: " + e.getMessage());
+            System.err.println("Error marking items as paid in receipt_items: " + e.getMessage());
             e.printStackTrace();
             return 0;
         }
+    }
+    
+    /**
+     * Get payment info for all items in a receipt (from receipt_items table).
+     * 
+     * @param receiptId The receipt ID
+     * @return Map of itemId -> {paidBy, payerName, paidAt}
+     */
+    public Map<Integer, Map<String, Object>> getItemPaymentInfoForReceipt(int receiptId) {
+        String sql = "SELECT item_id, paid_by, paid_at " +
+                     "FROM receipt_items " +
+                     "WHERE receipt_id = ? AND paid_by IS NOT NULL";
+        
+        Map<Integer, Map<String, Object>> paymentInfo = new HashMap<>();
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            pstmt.setInt(1, receiptId);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    int itemId = rs.getInt("item_id");
+                    String paidBy = rs.getString("paid_by");
+                    Timestamp paidAt = rs.getTimestamp("paid_at");
+                    
+                    Map<String, Object> info = new HashMap<>();
+                    info.put("paidBy", paidBy);
+                    info.put("paidAt", paidAt != null ? paidAt.getTime() : null);
+                    paymentInfo.put(itemId, info);
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error getting item payment info from receipt_items: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return paymentInfo;
     }
 
     /**
@@ -496,6 +568,8 @@ public class ReceiptDAO {
             pstmt.setString(2, userId); // Also exclude receipts uploaded by this user
 
             try (ResultSet rs = pstmt.executeQuery()) {
+                System.out.println("[ReceiptDAO] Getting pending receipts for user " + userId);
+                int count = 0;
                 while (rs.next()) {
                     Receipt receipt = mapResultSetToReceipt(rs);
                     // Load items for this receipt using addItem() method
@@ -503,7 +577,10 @@ public class ReceiptDAO {
                         receipt.addItem(item);
                     }
                     receipts.add(receipt);
+                    count++;
+                    System.out.println("[ReceiptDAO] Added pending receipt " + receipt.getReceiptId() + " (total so far: " + count + ")");
                 }
+                System.out.println("[ReceiptDAO] Found total of " + count + " pending receipts for user " + userId);
             }
         } catch (SQLException e) {
             System.err.println("Error getting pending receipts for user: " + e.getMessage());
@@ -522,14 +599,15 @@ public class ReceiptDAO {
      * @return List of Receipt objects with participant status information
      */
     public List<Receipt> getAllReceiptsForUser(String userId) {
-        // Get receipts where user is a participant (accepted or completed) or uploaded by them
-        // Filter to only show accepted and completed receipts (exclude declined and pending)
+        // Get receipts where:
+        // 1. User is a participant with status 'accepted' or 'completed'
+        // 2. OR user uploaded the receipt (they should see all their receipts regardless of status)
+        // This ensures uploaders see their newly created receipts immediately
         String sql = "SELECT DISTINCT r.* " +
                      "FROM receipts r " +
                      "LEFT JOIN receipt_participants rp ON r.receipt_id = rp.receipt_id AND rp.user_id = ? " +
-                     "WHERE (rp.user_id = ? AND rp.status = 'accepted') " +
+                     "WHERE (rp.user_id = ? AND rp.status IN ('accepted', 'completed')) " +
                      "   OR r.uploaded_by = ? " +
-                     "   OR r.status = 'completed' " +
                      "ORDER BY r.created_at DESC";
         
         List<Receipt> receipts = new ArrayList<>();
@@ -542,6 +620,8 @@ public class ReceiptDAO {
             pstmt.setString(3, userId);
 
             try (ResultSet rs = pstmt.executeQuery()) {
+                System.out.println("[ReceiptDAO] Getting all receipts for user " + userId);
+                int count = 0;
                 while (rs.next()) {
                     Receipt receipt = mapResultSetToReceipt(rs);
                     // Load items for this receipt using addItem() method
@@ -549,7 +629,10 @@ public class ReceiptDAO {
                         receipt.addItem(item);
                     }
                     receipts.add(receipt);
+                    count++;
+                    System.out.println("[ReceiptDAO] Added receipt " + receipt.getReceiptId() + " (total so far: " + count + ")");
                 }
+                System.out.println("[ReceiptDAO] Found total of " + count + " receipts for user " + userId);
             }
         } catch (SQLException e) {
             System.err.println("Error getting all receipts for user: " + e.getMessage());

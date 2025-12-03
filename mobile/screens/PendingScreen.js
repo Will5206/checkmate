@@ -30,9 +30,18 @@ export default function PendingScreen() {
     try {
       const response = await getPendingReceipts();
       
+      console.log('PendingScreen: Received response:', {
+        success: response.success,
+        receiptsCount: response.receipts ? response.receipts.length : 0,
+        receipts: response.receipts
+      });
+      
       if (response.success) {
-        setReceipts(response.receipts || []);
+        const receiptsList = response.receipts || [];
+        console.log('PendingScreen: Setting receipts, count:', receiptsList.length);
+        setReceipts(receiptsList);
       } else {
+        console.error('Failed to load pending receipts:', response.message);
         Alert.alert('Error', response.message || 'Failed to load pending receipts');
       }
     } catch (error) {

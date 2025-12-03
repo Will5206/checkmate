@@ -48,6 +48,7 @@ export default function BillReview() {
   const [itemAssignments, setItemAssignments] = useState({}); // itemId -> quantity
   const [itemPaymentInfo, setItemPaymentInfo] = useState({}); // itemId -> {paidBy, payerName, paidAt}
   const [owedAmount, setOwedAmount] = useState(0);
+  const [userHasPaid, setUserHasPaid] = useState(false); // Boolean: true only after payment is fully processed
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
   const [claimingItems, setClaimingItems] = useState(new Set()); // Track items being claimed to prevent double-clicks
 
@@ -70,6 +71,16 @@ export default function BillReview() {
     if (routeIsFromActivity) {
       setIsFromActivity(true);
       setIsFromCamera(false);
+    }
+    
+    // Initialize userHasPaid from route params if provided
+    // Only set to true if explicitly passed and true (after actual payment)
+    const routeUserHasPaid = route.params?.userHasPaid;
+    if (routeUserHasPaid === true) {
+      setUserHasPaid(true);
+    } else {
+      // Default to false - only set to true after successful payment
+      setUserHasPaid(false);
     }
     
     if (routeData) {
@@ -127,13 +138,25 @@ export default function BillReview() {
   }, [uploadedBy]);
 
   // Load item assignments if viewing from Activity
+  // This loads payment info from the database so we can show "Paid by [name]" for paid items
   useEffect(() => {
     console.log('BillReview useEffect - isFromActivity:', isFromActivity, 'receiptId:', receiptId);
     if (isFromActivity && receiptId) {
-      console.log('Loading item assignments for receiptId:', receiptId);
+      console.log('Loading item assignments and payment info for receiptId:', receiptId);
       loadItemAssignments();
     }
   }, [isFromActivity, receiptId]);
+  
+  // Also reload when screen comes into focus to get latest payment status
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', () => {
+      if (isFromActivity && receiptId) {
+        console.log('BillReview screen focused - reloading payment info');
+        loadItemAssignments();
+      }
+    });
+    return unsubscribe;
+  }, [navigation, isFromActivity, receiptId]);
 
   const loadItemAssignments = async () => {
     if (!receiptId) return;
@@ -143,11 +166,37 @@ export default function BillReview() {
       const response = await getItemAssignments(receiptId);
       if (response.success) {
         setItemAssignments(response.assignments || {});
-        setOwedAmount(response.owedAmount || 0);
-        setItemPaymentInfo(response.itemPaymentInfo || {}); // Store payment info for all items
+        const newOwedAmount = response.owedAmount || 0;
+        setOwedAmount(newOwedAmount);
+        
+        // Store payment info for all items - this shows which items are paid and by whom
+        const paymentInfo = response.itemPaymentInfo || {};
+        setItemPaymentInfo(paymentInfo);
+        console.log('Loaded payment info for', Object.keys(paymentInfo).length, 'items:', paymentInfo);
+        
+        // Check if user has actually paid
+        // Only set userHasPaid to true if:
+        // 1. User has items claimed (assignments exist) AND
+        // 2. Owed amount is 0 or very close to 0 AND
+        // 3. We have payment info for items (meaning payment was actually made)
+        // This prevents false positives when user hasn't claimed anything yet
+        const hasItemsClaimed = Object.keys(response.assignments || {}).length > 0;
+        const hasPaymentInfo = Object.keys(paymentInfo).length > 0;
+        const hasNoOwedAmount = newOwedAmount <= 0.01;
+        
+        // Only mark as paid if user has claimed items AND paid for them
+        const hasPaid = hasItemsClaimed && hasNoOwedAmount && hasPaymentInfo;
+        
+        // Always set based on actual payment status
+        setUserHasPaid(hasPaid);
+        
+        console.log('Payment status check - hasPaid:', hasPaid, 'hasItemsClaimed:', hasItemsClaimed, 'owedAmount:', newOwedAmount, 'paymentInfo items:', Object.keys(paymentInfo).length);
+      } else {
+        console.error('Failed to load item assignments:', response.message);
       }
     } catch (error) {
       console.error('Error loading item assignments:', error);
+      // Don't show alert - network errors are usually temporary
     } finally {
       setIsLoadingAssignments(false);
     }
@@ -226,16 +275,27 @@ export default function BillReview() {
               const response = await payReceipt(receiptId);
               
               if (response.success) {
-                // Optimistic update: Update UI immediately
-                setOwedAmount(response.owedAmount || 0);
+                // Payment was successful - set userHasPaid to true
+                setUserHasPaid(true);
                 
-                // Update item payment info from response (avoids full reload)
+                // Update owed amount
+                const newOwedAmount = response.owedAmount || 0;
+                setOwedAmount(newOwedAmount);
+                
+                // Update item payment info from response
                 if (response.itemPaymentInfo) {
                   setItemPaymentInfo(prev => ({
                     ...prev,
                     ...response.itemPaymentInfo
                   }));
                 }
+                
+                // Reload item assignments to get fresh payment info from database
+                // This ensures "Paid by [name]" shows correctly
+                await loadItemAssignments();
+                
+                // After reload, ensure userHasPaid stays true (payment was successful)
+                setUserHasPaid(true);
                 
                 // Show success message
                 const message = response.receiptCompleted
@@ -244,6 +304,8 @@ export default function BillReview() {
                 
                 Alert.alert('Success', message);
               } else {
+                // Payment failed - keep userHasPaid as false
+                setUserHasPaid(false);
                 Alert.alert('Payment Failed', response.message || 'Failed to process payment');
               }
             } catch (error) {
@@ -420,13 +482,15 @@ export default function BillReview() {
               billData.items.map((item, index) => {
                 const itemId = item.itemId || item.id;
                 const isClaimed = itemId && itemAssignments[itemId] && itemAssignments[itemId] > 0;
-                const paymentInfo = itemPaymentInfo[itemId];
+                
+                // Check payment info - backend returns string keys, so try both string and number
+                const paymentInfo = itemPaymentInfo[String(itemId)] || itemPaymentInfo[itemId] || null;
                 const isPaid = paymentInfo != null;
                 const payerName = paymentInfo?.payerName || null;
                 
                 // Debug logging
                 if (isFromActivity && index === 0) {
-                  console.log('BillReview: First item - itemId:', itemId, 'isFromActivity:', isFromActivity, 'itemAssignments:', itemAssignments, 'isPaid:', isPaid);
+                  console.log('BillReview: First item - itemId:', itemId, 'isFromActivity:', isFromActivity, 'itemAssignments:', itemAssignments, 'isPaid:', isPaid, 'paymentInfo:', paymentInfo, 'itemPaymentInfo keys:', Object.keys(itemPaymentInfo));
                 }
                 
                 const isClaiming = claimingItems.has(itemId);
@@ -447,23 +511,26 @@ export default function BillReview() {
                       <View style={styles.itemInfo}>
                         <View style={styles.itemNameRow}>
                           <Text style={[styles.itemName, isPaid && styles.itemNamePaid]}>{item.name}</Text>
-                          {isFromActivity && !isPaid && (
-                            <View style={[styles.claimBadge, isClaimed && styles.claimBadgeActive]}>
-                              <Ionicons 
-                                name={isClaimed ? "checkmark-circle" : "ellipse-outline"} 
-                                size={16} 
-                                color={isClaimed ? "#059669" : "#9CA3AF"} 
-                              />
-                              <Text style={[styles.claimBadgeText, isClaimed && styles.claimBadgeTextActive]}>
-                                {isClaimed ? "Claimed" : "Tap to claim"}
-                              </Text>
-                            </View>
-                          )}
-                          {isPaid && (
+                          {/* Show "Paid by [name]" if item is paid - this takes priority over claim status */}
+                          {isPaid ? (
                             <View style={styles.paidBadge}>
                               <Ionicons name="checkmark-circle" size={16} color="#059669" />
                               <Text style={styles.paidBadgeText}>Paid by {payerName || 'Someone'}</Text>
                             </View>
+                          ) : (
+                            /* Only show claim badge if item is not paid and we're viewing from Activity */
+                            isFromActivity && (
+                              <View style={[styles.claimBadge, isClaimed && styles.claimBadgeActive]}>
+                                <Ionicons 
+                                  name={isClaimed ? "checkmark-circle" : "ellipse-outline"} 
+                                  size={16} 
+                                  color={isClaimed ? "#059669" : "#9CA3AF"} 
+                                />
+                                <Text style={[styles.claimBadgeText, isClaimed && styles.claimBadgeTextActive]}>
+                                  {isClaimed ? "Claimed" : "Tap to claim"}
+                                </Text>
+                              </View>
+                            )
                           )}
                         </View>
                         {item.qty > 1 && (
@@ -496,11 +563,17 @@ export default function BillReview() {
               {Object.keys(itemAssignments).length === 0 && (
                 <Text style={styles.hintText}>Tap items above to claim them and calculate your portion</Text>
               )}
-              {owedAmount > 0 && (
+              {owedAmount > 0.01 && !userHasPaid && (
                 <TouchableOpacity style={styles.payButton} onPress={handlePay}>
                   <Ionicons name="card-outline" size={20} color="#fff" style={styles.buttonIcon} />
                   <Text style={styles.payButtonText}>Pay ${owedAmount.toFixed(2)}</Text>
                 </TouchableOpacity>
+              )}
+              {userHasPaid && (
+                <View style={[styles.paidBadge, { marginTop: 10, padding: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }]}>
+                  <Ionicons name="checkmark-circle" size={20} color="#059669" />
+                  <Text style={[styles.paidBadgeText, { marginLeft: 8 }]}>You have paid for your items</Text>
+                </View>
               )}
             </View>
           </View>

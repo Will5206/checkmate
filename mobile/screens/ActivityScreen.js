@@ -24,7 +24,14 @@ export default function ActivityScreen() {
       setLoading(true);
       const response = await getActivityReceipts();
       
+      console.log('ActivityScreen: Received response:', {
+        success: response.success,
+        receiptsCount: response.receipts ? response.receipts.length : 0,
+        receipts: response.receipts
+      });
+      
       if (response.success && response.receipts) {
+        console.log('ActivityScreen: Setting receipts, count:', response.receipts.length);
         setReceipts(response.receipts);
       } else {
         console.error('Failed to load receipts:', response.message);
