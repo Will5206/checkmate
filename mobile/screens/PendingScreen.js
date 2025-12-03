@@ -266,7 +266,7 @@ export default function PendingScreen() {
             onPress={() => handleReview(receipt)}
             disabled={isProcessing}
           >
-            <Ionicons name="eye-outline" size={18} color="#059669" />
+            <Ionicons name="eye-outline" size={18} color="#0d9488" />
             <Text style={styles.reviewButtonText}>Review</Text>
           </TouchableOpacity>
           
@@ -318,7 +318,7 @@ export default function PendingScreen() {
         {/* Content */}
         {isLoading ? (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#059669" />
+            <ActivityIndicator size="large" color="#0d9488" />
             <Text style={styles.loadingText}>Loading receipts...</Text>
           </View>
         ) : receipts.length === 0 ? (
@@ -425,7 +425,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   refreshButton: {
-    backgroundColor: '#059669',
+    backgroundColor: '#0d9488',
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 8,
@@ -536,14 +536,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#D1FAE5',
+    backgroundColor: '#ccfbf1',
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 8,
     gap: 6,
   },
   reviewButtonText: {
-    color: '#059669',
+    color: '#0d9488',
     fontSize: 14,
     fontWeight: '600',
   },
@@ -568,7 +568,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#059669',
+    backgroundColor: '#0d9488',
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 8,

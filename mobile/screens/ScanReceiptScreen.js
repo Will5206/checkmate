@@ -166,7 +166,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#f9fafb' 
   },
   title: { fontSize: 24, fontWeight: '700', marginBottom: 20 },
-  button: { backgroundColor: '#059669', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
+  button: { backgroundColor: '#0d9488', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
   buttonText: { color: mainColor, fontWeight: '600' },
   preview: { width: 250, height: 300, borderRadius: 12, marginBottom: 20 },
   reset: { color: '#2563eb', marginTop: 10 },

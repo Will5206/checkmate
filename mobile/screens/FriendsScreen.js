@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -12,22 +13,33 @@ import {
   Platform,
   RefreshControl,
 } from 'react-native';
-import { addFriendByEmail, getFriendsList, removeFriend } from '../services/friendsService';
+import { addFriendByEmail, getFriendsList, removeFriend, getPendingFriendRequests, acceptFriendRequest, declineFriendRequest } from '../services/friendsService';
 import BottomNavBar from '../components/BottomNavBar';
 
 export default function FriendsScreen() {
   const [email, setEmail] = useState('');
   const [friends, setFriends] = useState([]);
+  const [pendingRequests, setPendingRequests] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingFriends, setIsLoadingFriends] = useState(true);
+  const [isLoadingPending, setIsLoadingPending] = useState(true);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [removingFriendId, setRemovingFriendId] = useState(null);
+  const [processingRequestId, setProcessingRequestId] = useState(null);
 
-  // Load friends list on component mount
+  // Load friends list and pending requests on component mount
   useEffect(() => {
     loadFriends();
+    loadPendingRequests();
   }, []);
+
+  // Reload pending requests when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      loadPendingRequests();
+    }, [])
+  );
 
   const loadFriends = async () => {
     setIsLoadingFriends(true);
@@ -42,6 +54,20 @@ export default function FriendsScreen() {
     }
 
     setIsLoadingFriends(false);
+  };
+
+  const loadPendingRequests = async () => {
+    setIsLoadingPending(true);
+    const response = await getPendingFriendRequests();
+
+    if (response.success) {
+      const requests = response.pendingRequests || [];
+      setPendingRequests(requests);
+    } else {
+      console.error('Failed to load pending requests:', response.message);
+    }
+
+    setIsLoadingPending(false);
   };
 
   const handleAddFriend = async () => {
@@ -73,8 +99,8 @@ export default function FriendsScreen() {
     if (response.success) {
       setError(null);
       if (response.added) {
-        setSuccess(`✅ Friend added! ${response.friendName} is now your friend`);
-        loadFriends(); // Refresh friends list
+        setSuccess(`✅ Friend request sent! ${response.friendName} will receive your request`);
+        loadPendingRequests(); // Refresh pending requests (in case they sent one to us)
 
         // Clear success message and email after 3 seconds
         setTimeout(() => {
@@ -82,7 +108,13 @@ export default function FriendsScreen() {
           setSuccess(null);
         }, 3000);
       } else {
-        setError('You are already friends with this user');
+        // Check the message to determine the error type
+        const message = response.message || '';
+        if (message.includes('pending')) {
+          setError('Friend request pending');
+        } else {
+          setError('You are already friends with this user');
+        }
         setTimeout(() => {
           setEmail('');
           setError(null);
@@ -107,6 +139,43 @@ export default function FriendsScreen() {
         setEmail('');
         setError(null);
       }, 3000);
+    }
+  };
+
+  const handleAcceptRequest = async (friendId) => {
+    setProcessingRequestId(friendId);
+    try {
+      const response = await acceptFriendRequest(friendId);
+      if (response.success) {
+        // Refresh both friends list and pending requests
+        await loadFriends();
+        await loadPendingRequests();
+      } else {
+        Alert.alert('Error', response.message || 'Failed to accept friend request');
+      }
+    } catch (error) {
+      console.error('Error accepting friend request:', error);
+      Alert.alert('Error', 'Failed to accept friend request');
+    } finally {
+      setProcessingRequestId(null);
+    }
+  };
+
+  const handleDeclineRequest = async (friendId) => {
+    setProcessingRequestId(friendId);
+    try {
+      const response = await declineFriendRequest(friendId);
+      if (response.success) {
+        // Refresh pending requests
+        await loadPendingRequests();
+      } else {
+        Alert.alert('Error', response.message || 'Failed to decline friend request');
+      }
+    } catch (error) {
+      console.error('Error declining friend request:', error);
+      Alert.alert('Error', 'Failed to decline friend request');
+    } finally {
+      setProcessingRequestId(null);
     }
   };
 
@@ -237,6 +306,61 @@ export default function FriendsScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Pending Friend Requests Section */}
+        {pendingRequests.length > 0 && (
+          <View style={styles.pendingRequestsSection}>
+            <Text style={styles.sectionTitle}>
+              Friend Requests ({pendingRequests.length})
+            </Text>
+            {pendingRequests.map((request, index) => {
+              const isProcessing = processingRequestId === request.userId;
+              const initials = getInitials(request.name);
+              const avatarColor = getAvatarColor(request.name);
+              
+              return (
+                <View key={request.userId} style={[
+                  styles.requestItem,
+                  index === pendingRequests.length - 1 && styles.requestItemLast
+                ]}>
+                  <View style={styles.requestLeft}>
+                    <View style={[styles.avatar, { backgroundColor: avatarColor }]}>
+                      <Text style={styles.avatarText}>{initials}</Text>
+                    </View>
+                    <View style={styles.requestInfo}>
+                      <Text style={styles.requestName}>{request.name}</Text>
+                      <Text style={styles.requestEmail}>{request.email}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.requestActions}>
+                    <TouchableOpacity
+                      style={[styles.acceptButton, isProcessing && styles.buttonDisabled]}
+                      onPress={() => handleAcceptRequest(request.userId)}
+                      disabled={isProcessing}
+                    >
+                      {isProcessing ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={styles.acceptButtonText}>✓</Text>
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.declineButton, isProcessing && styles.buttonDisabled]}
+                      onPress={() => handleDeclineRequest(request.userId)}
+                      disabled={isProcessing}
+                    >
+                      {isProcessing ? (
+                        <ActivityIndicator size="small" color="#DC2626" />
+                      ) : (
+                        <Text style={styles.declineButtonText}>✕</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
         {/* Friends List Section */}
         <View style={styles.friendsListSection}>
           <Text style={styles.sectionTitle}>
@@ -245,7 +369,7 @@ export default function FriendsScreen() {
 
           {isLoadingFriends ? (
             <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#059669" />
+              <ActivityIndicator size="large" color="#0d9488" />
             </View>
           ) : friends.length === 0 ? (
             <View style={styles.emptyContainer}>
@@ -264,9 +388,12 @@ export default function FriendsScreen() {
               refreshControl={
                 <RefreshControl
                   refreshing={isLoadingFriends}
-                  onRefresh={loadFriends}
-                  colors={['#059669']}
-                  tintColor="#059669"
+                  onRefresh={() => {
+                    loadFriends();
+                    loadPendingRequests();
+                  }}
+                  colors={['#0d9488']}
+                  tintColor="#0d9488"
                 />
               }
               showsVerticalScrollIndicator={false}
@@ -342,7 +469,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   successText: {
-    color: '#059669',
+    color: '#0d9488',
     fontSize: 14,
     fontWeight: '600',
     marginTop: -8,
@@ -350,7 +477,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   addButton: {
-    backgroundColor: '#059669',
+    backgroundColor: '#0d9488',
     borderRadius: 8,
     padding: 14,
     alignItems: 'center',
@@ -478,5 +605,79 @@ const styles = StyleSheet.create({
     color: '#DC2626',
     fontSize: 20,
     fontWeight: '600',
+  },
+  pendingRequestsSection: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
+  },
+  requestItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  requestItemLast: {
+    borderBottomWidth: 0,
+  },
+  requestLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  requestInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  requestName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  requestEmail: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  requestActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  acceptButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#0d9488',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  acceptButtonText: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '600',
+  },
+  declineButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  declineButtonText: {
+    color: '#DC2626',
+    fontSize: 20,
+    fontWeight: '600',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
 });

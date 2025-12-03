@@ -573,7 +573,7 @@ export default function BillReview() {
                 <Text style={styles.paymentLabel}>You paid</Text>
               </View>
               <View style={styles.paymentStatus}>
-                <Ionicons name="checkmark-circle" size={24} color="#059669" />
+                <Ionicons name="checkmark-circle" size={24} color="#0d9488" />
                 <View style={styles.paidBadgeLarge}>
                   <Text style={styles.paidBadgeLargeText}>Paid</Text>
                 </View>
@@ -680,7 +680,7 @@ export default function BillReview() {
                           <Text style={[styles.itemName, isPaid && styles.itemNamePaid]}>{item.name}</Text>
                           {isPaid ? (
                             <View style={styles.paidBadge}>
-                              <Ionicons name="checkmark-circle" size={16} color="#059669" />
+                              <Ionicons name="checkmark-circle" size={16} color="#0d9488" />
                               <Text style={styles.paidBadgeText}>Paid by {payerName || 'Someone'}</Text>
                             </View>
                           ) : (
@@ -689,7 +689,7 @@ export default function BillReview() {
                                 <Ionicons 
                                   name={isClaimed ? "checkmark-circle" : "ellipse-outline"} 
                                   size={16} 
-                                  color={isClaimed ? "#059669" : "#9CA3AF"} 
+                                  color={isClaimed ? "#0d9488" : "#9CA3AF"} 
                                 />
                                 <Text style={[styles.claimBadgeText, isClaimed && styles.claimBadgeTextActive]}>
                                   {isClaimed ? "Claimed" : "Tap to claim"}
@@ -835,7 +835,7 @@ export default function BillReview() {
               Alert.alert('View Receipt', 'Receipt image viewer coming soon!');
             }}
           >
-            <Ionicons name="receipt-outline" size={20} color="#059669" />
+            <Ionicons name="receipt-outline" size={20} color="#0d9488" />
             <Text style={styles.viewReceiptButtonText}>View Original Receipt</Text>
           </TouchableOpacity>
         )}
@@ -894,10 +894,10 @@ const styles = StyleSheet.create({
     color: '#6B7280',
   },
   paymentSummaryCard: {
-    backgroundColor: '#D1FAE5',
+    backgroundColor: '#ccfbf1',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#A7F3D0',
+    borderColor: '#99f6e4',
     marginBottom: spacing.md,
     marginTop: spacing.md,
   },
@@ -910,12 +910,12 @@ const styles = StyleSheet.create({
   paymentAmount: {
     fontSize: 28,
     fontWeight: '700',
-    color: '#065F46',
+    color: '#0f766e',
     marginBottom: 4,
   },
   paymentLabel: {
     fontSize: 14,
-    color: '#047857',
+    color: '#14b8a6',
     fontWeight: '600',
   },
   paymentStatus: {
@@ -924,7 +924,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   paidBadgeLarge: {
-    backgroundColor: '#A7F3D0',
+    backgroundColor: '#99f6e4',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 12,
@@ -932,7 +932,7 @@ const styles = StyleSheet.create({
   paidBadgeLargeText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#065F46',
+    color: '#0f766e',
   },
   header: {
     alignItems: 'center',
@@ -954,7 +954,7 @@ const styles = StyleSheet.create({
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#d1fae5',
+    backgroundColor: '#ccfbf1',
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderRadius: 12,
@@ -962,7 +962,7 @@ const styles = StyleSheet.create({
   },
   badgeText: {
     fontSize: typography.sizes.sm,
-    color: '#059669',
+    color: '#0d9488',
     fontWeight: '600',
   },
   totalCard: {
@@ -1046,7 +1046,7 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   itemNamePaid: {
-    color: '#059669',
+    color: '#0d9488',
   },
   itemQty: {
     fontSize: typography.sizes.sm,
@@ -1054,7 +1054,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
   itemQtyPaid: {
-    color: '#059669',
+    color: '#0d9488',
   },
   itemPrice: {
     fontSize: typography.sizes.md,
@@ -1062,7 +1062,7 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   itemPricePaid: {
-    color: '#059669',
+    color: '#0d9488',
   },
   separator: {
     height: 1,
@@ -1119,7 +1119,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   primaryButton: {
-    backgroundColor: '#059669',
+    backgroundColor: '#0d9488',
     borderRadius: 12,
     padding: spacing.md,
     flexDirection: 'row',
@@ -1160,7 +1160,7 @@ const styles = StyleSheet.create({
     marginVertical: 2,
   },
   itemRowPaid: {
-    backgroundColor: '#D1FAE5',
+    backgroundColor: '#ccfbf1',
     borderRadius: 8,
     marginVertical: 2,
     opacity: 0.8,
@@ -1177,7 +1177,7 @@ const styles = StyleSheet.create({
   paidBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#D1FAE5',
+    backgroundColor: '#ccfbf1',
     paddingHorizontal: spacing.xs,
     paddingVertical: 2,
     borderRadius: 12,
@@ -1185,7 +1185,7 @@ const styles = StyleSheet.create({
   },
   paidBadgeText: {
     fontSize: typography.sizes.xs,
-    color: '#059669',
+    color: '#0d9488',
     fontWeight: '600',
     marginLeft: 4,
   },
@@ -1200,7 +1200,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   claimBadgeActive: {
-    backgroundColor: '#d1fae5',
+    backgroundColor: '#ccfbf1',
   },
   claimBadgeText: {
     fontSize: typography.sizes.xs,
@@ -1208,10 +1208,10 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   claimBadgeTextActive: {
-    color: '#059669',
+    color: '#0d9488',
   },
   payButton: {
-    backgroundColor: '#059669',
+    backgroundColor: '#0d9488',
     borderRadius: 12,
     padding: spacing.md,
     flexDirection: 'row',
@@ -1323,12 +1323,12 @@ const styles = StyleSheet.create({
   yourShareLabel: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#059669',
+    color: '#0d9488',
   },
   yourShareValue: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#059669',
+    color: '#0d9488',
   },
   viewReceiptButton: {
     flexDirection: 'row',
@@ -1345,6 +1345,6 @@ const styles = StyleSheet.create({
   viewReceiptButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#059669',
+    color: '#0d9488',
   },
 });

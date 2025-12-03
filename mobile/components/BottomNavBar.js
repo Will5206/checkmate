@@ -12,7 +12,7 @@ export default function BottomNavBar() {
       name: 'Pending',
       screen: 'Pending',
       icon: 'timer-outline',
-      activeIcon: 'trophy',
+      activeIcon: 'timer',
     },
     {
       name: 'History',
@@ -31,7 +31,7 @@ export default function BottomNavBar() {
       name: 'Friends',
       screen: 'Friends',  
       icon: 'people-outline',
-      activeIcon: 'time',
+      activeIcon: 'people',
     },
     {
       name: 'Home',
@@ -72,7 +72,7 @@ export default function BottomNavBar() {
               <Ionicons
                 name={iconName}
                 size={24}
-                color={isActive ? '#059669' : '#6B7280'}
+                color={isActive ? '#0d9488' : '#6B7280'}
               />
               <Text
                 style={[
@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   navLabelActive: {
-    color: '#059669',
+    color: '#0d9488',
   },
   centerButton: {
     alignItems: 'center',
@@ -133,7 +133,7 @@ const styles = StyleSheet.create({
   centerIconContainer: {
     width: 56,
     height: 56,
-    backgroundColor: '#059669',
+    backgroundColor: '#0d9488',
     borderRadius: 28,
     justifyContent: 'center',
     alignItems: 'center',
@@ -147,7 +147,7 @@ const styles = StyleSheet.create({
   centerLabel: {
     fontSize: 12,
     marginTop: 4,
-    color: '#059669',
+    color: '#0d9488',
     fontWeight: '600',
   },
 });

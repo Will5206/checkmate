@@ -146,7 +146,7 @@ export default function ActivityScreen() {
               <Ionicons 
                 name={isAccepted ? "checkmark-circle" : "time-outline"} 
                 size={20} 
-                color={isAccepted ? "#059669" : "#6B7280"} 
+                color={isAccepted ? "#0d9488" : "#6B7280"} 
               />
             </View>
             <View style={styles.cardInfo}>
@@ -214,7 +214,7 @@ export default function ActivityScreen() {
         {/* Content */}
         {loading ? (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#059669" />
+            <ActivityIndicator size="large" color="#0d9488" />
             <Text style={styles.loadingText}>Loading receipts...</Text>
           </View>
         ) : receipts.length === 0 ? (
@@ -304,7 +304,7 @@ const styles = StyleSheet.create({
   iconContainer: {
     width: 40,
     height: 40,
-    backgroundColor: '#D1FAE5',
+    backgroundColor: '#ccfbf1',
     borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
@@ -370,7 +370,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   paidBadge: {
-    backgroundColor: '#D1FAE5',
+    backgroundColor: '#ccfbf1',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
@@ -378,7 +378,7 @@ const styles = StyleSheet.create({
   paidBadgeText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#059669',
+    color: '#0d9488',
   },
   pendingBadge: {
     backgroundColor: '#FEF3C7',
@@ -387,17 +387,17 @@ const styles = StyleSheet.create({
     color: '#D97706',
   },
   completedBadge: {
-    backgroundColor: '#D1FAE5',
+    backgroundColor: '#ccfbf1',
   },
   completedBadgeText: {
-    color: '#059669',
+    color: '#0d9488',
     fontWeight: '600',
   },
   paidStatusBadge: {
-    backgroundColor: '#D1FAE5',
+    backgroundColor: '#ccfbf1',
   },
   paidStatusBadgeText: {
-    color: '#059669',
+    color: '#0d9488',
     fontWeight: '600',
   },
   loadingContainer: {

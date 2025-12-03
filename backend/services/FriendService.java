@@ -71,6 +71,7 @@ public class FriendService {
 
     /**
      * Decline a friend request by updating its status to 'declined'.
+     * This allows the requester to send a new request later.
      */
     public boolean declineFriendRequest(String userId1, String userId2) {
         boolean updated = friendshipDAO.updateFriendshipStatus(userId1, userId2, "declined");

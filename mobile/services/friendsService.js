@@ -81,6 +81,119 @@ export async function getFriendsList() {
 }
 
 /**
+ * Get pending friend requests for the current user
+ * @returns {Promise<Object>} Response with pendingRequests array
+ */
+export async function getPendingFriendRequests() {
+  try {
+    const userId = await AsyncStorage.getItem('userId');
+
+    if (!userId) {
+      return {
+        success: false,
+        message: 'User not logged in',
+      };
+    }
+
+    const response = await fetch(
+      `${API_BASE_URL}/friends/pending?userId=${userId}`,
+      {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    const data = await response.json();
+    return data;
+
+  } catch (error) {
+    console.error('Get pending friend requests error:', error);
+    return {
+      success: false,
+      message: 'Network error. Please check your connection.',
+    };
+  }
+}
+
+/**
+ * Accept a friend request
+ * @param {string} friendId - Friend's user ID
+ * @returns {Promise<Object>} Response with success status
+ */
+export async function acceptFriendRequest(friendId) {
+  try {
+    const userId = await AsyncStorage.getItem('userId');
+
+    if (!userId) {
+      return {
+        success: false,
+        message: 'User not logged in',
+      };
+    }
+
+    const response = await fetch(
+      `${API_BASE_URL}/friends/accept?userId=${userId}&friendId=${encodeURIComponent(friendId)}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    const data = await response.json();
+    return data;
+
+  } catch (error) {
+    console.error('Accept friend request error:', error);
+    return {
+      success: false,
+      message: 'Network error. Please check your connection.',
+    };
+  }
+}
+
+/**
+ * Decline a friend request
+ * @param {string} friendId - Friend's user ID
+ * @returns {Promise<Object>} Response with success status
+ */
+export async function declineFriendRequest(friendId) {
+  try {
+    const userId = await AsyncStorage.getItem('userId');
+
+    if (!userId) {
+      return {
+        success: false,
+        message: 'User not logged in',
+      };
+    }
+
+    const response = await fetch(
+      `${API_BASE_URL}/friends/decline?userId=${userId}&friendId=${encodeURIComponent(friendId)}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    const data = await response.json();
+    return data;
+
+  } catch (error) {
+    console.error('Decline friend request error:', error);
+    return {
+      success: false,
+      message: 'Network error. Please check your connection.',
+    };
+  }
+}
+
+/**
  * Remove friend
  * @param {string} friendId - Friend's user ID
  * @returns {Promise<Object>} Response with success status
