@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, Image, TouchableOpacity, ActivityIndicator, StyleSheet, Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 // bringing in nav bar
 import BottomNavBar from '../components/BottomNavBar';
@@ -23,6 +24,44 @@ export default function ScanReceiptScreen() {
   const [parsedResult, setParsedResult] = useState(null);
   const [parsingError, setParsingError] = useState(null);
   const abortControllerRef = useRef(null);
+
+  // Request camera permissions
+  const requestCameraPermission = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert(
+        'Camera Permission Required',
+        'Please allow camera access to take photos of receipts.',
+        [{ text: 'OK' }]
+      );
+      return false;
+    }
+    return true;
+  };
+
+  const handleTakePhoto = async () => {
+    try {
+      const hasPermission = await requestCameraPermission();
+      if (!hasPermission) return;
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: 'images',
+        quality: 0.8,
+        allowsEditing: false,
+      });
+      
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        // Reset parsing state when new image is selected
+        setParsingStatus('idle');
+        setParsedResult(null);
+        setParsingError(null);
+        setImageUri(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Error taking photo:', error);
+      Alert.alert('Error', 'Failed to open camera');
+    }
+  };
 
   const handlePickImage = async () => {
     try {
@@ -167,7 +206,7 @@ export default function ScanReceiptScreen() {
         text: 'Retake Photo',
         onPress: () => {
           setImageUri(null);
-          handlePickImage();
+          handleTakePhoto();
         },
       });
     }
@@ -271,9 +310,16 @@ export default function ScanReceiptScreen() {
         {!imageUri ? (
           <>
             <Text style={styles.title}>Scan Receipt</Text>
-            <TouchableOpacity style={styles.button} onPress={handlePickImage}>
-              <Text style={styles.buttonText}>Choose Receipt Photo</Text>
-            </TouchableOpacity>
+            <View style={styles.buttonContainer}>
+              <TouchableOpacity style={[styles.button, styles.cameraButton]} onPress={handleTakePhoto}>
+                <Ionicons name="camera" size={24} color="white" style={styles.buttonIcon} />
+                <Text style={styles.buttonText}>Take Photo</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.button, styles.libraryButton]} onPress={handlePickImage}>
+                <Ionicons name="images" size={24} color="white" style={styles.buttonIcon} />
+                <Text style={styles.buttonText}>Choose from Library</Text>
+              </TouchableOpacity>
+            </View>
           </>
         ) : (
           <>
@@ -309,9 +355,32 @@ const styles = StyleSheet.create({
     paddingBottom: 100, // Space for bottom nav bar
     backgroundColor: '#f9fafb' 
   },
-  title: { fontSize: 24, fontWeight: '700', marginBottom: 20 },
-  button: { backgroundColor: '#0d9488', paddingVertical: 12, paddingHorizontal: 20, borderRadius: 8 },
-  buttonText: { color: mainColor, fontWeight: '600' },
+  title: { fontSize: 24, fontWeight: '700', marginBottom: 30 },
+  buttonContainer: {
+    width: '100%',
+    maxWidth: 300,
+    gap: 12,
+  },
+  button: { 
+    backgroundColor: '#0d9488', 
+    paddingVertical: 14, 
+    paddingHorizontal: 20, 
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  cameraButton: {
+    backgroundColor: '#0d9488',
+  },
+  libraryButton: {
+    backgroundColor: '#059669',
+  },
+  buttonIcon: {
+    marginRight: 4,
+  },
+  buttonText: { color: mainColor, fontWeight: '600', fontSize: 16 },
   preview: { width: 250, height: 300, borderRadius: 12, marginBottom: 20 },
   reset: { color: '#2563eb', marginTop: 10 },
 });
