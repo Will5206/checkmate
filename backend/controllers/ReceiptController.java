@@ -353,6 +353,11 @@ public class ReceiptController {
                 boolean isUploader = uploadedBy != null && uploadedBy.equals(userIdStr);
                 receiptJson.put("isUploader", isUploader);
                 
+                // CRITICAL: Add complete status so frontend can determine if receipt is completed
+                // Frontend will hide pay button and show completed UI when complete = true
+                boolean isComplete = receiptDAO.isReceiptComplete(receiptId);
+                receiptJson.put("complete", isComplete);
+                
                 if (!isUploader) {
                     if (participantStatus != null && !participantStatus.equals("declined")) {
                         float paidAmount = receiptDAO.getPaidAmount(receiptId, userIdStr);
@@ -983,11 +988,14 @@ public class ReceiptController {
                 if (success) {
                     // Calculate updated amount owed (optimized: single query)
                     float owedAmount = receiptDAO.calculateUserOwedAmount(receiptId, userIdStr);
+                    // Also calculate amount excluding paid items
+                    float owedAmountExcludingPaid = receiptDAO.calculateUserOwedAmountExcludingPaid(receiptId, userIdStr);
                     
                     JSONObject resp = new JSONObject()
                         .put("success", true)
                         .put("message", isDelete ? "Item unclaimed" : "Item claimed")
-                        .put("owedAmount", owedAmount);
+                        .put("owedAmount", owedAmount)
+                        .put("owedAmountExcludingPaid", owedAmountExcludingPaid);
                     sendJson(exchange, 200, resp);
                 } else {
                     sendJson(exchange, 400, new JSONObject()
@@ -1039,8 +1047,10 @@ public class ReceiptController {
                 // Get user's assignments
                 Map<Integer, Integer> assignments = receiptDAO.getItemAssignmentsForUser(receiptId, userIdStr);
                 float owedAmount = receiptDAO.calculateUserOwedAmount(receiptId, userIdStr);
+                // Calculate amount owed excluding paid items (for "Amount Owed" section)
+                float owedAmountExcludingPaid = receiptDAO.calculateUserOwedAmountExcludingPaid(receiptId, userIdStr);
                 
-                System.out.println("[ReceiptController] Found " + assignments.size() + " item assignments, owedAmount: " + owedAmount);
+                System.out.println("[ReceiptController] Found " + assignments.size() + " item assignments, owedAmount: " + owedAmount + ", owedAmountExcludingPaid: " + owedAmountExcludingPaid);
                 
                 // Build assignments JSON
                 JSONObject assignmentsJson = new JSONObject();
@@ -1075,6 +1085,7 @@ public class ReceiptController {
                     .put("success", true)
                     .put("assignments", assignmentsJson)
                     .put("owedAmount", owedAmount)
+                    .put("owedAmountExcludingPaid", owedAmountExcludingPaid)
                     .put("itemPaymentInfo", itemPaymentInfo);
                 
                 System.out.println("[ReceiptController] Sending response: " + resp.toString());
@@ -1266,6 +1277,8 @@ public class ReceiptController {
                 // Optimized: Calculate new amounts (we know paidAmount = old paidAmount + remainingAmount)
                 float newPaidAmount = paidAmount + remainingAmount;
                 float newOwedAmount = owedAmount - remainingAmount; // Should be 0 or close to 0
+                // Calculate amount excluding paid items (should be 0 or close to 0 after payment)
+                float newOwedAmountExcludingPaid = receiptDAO.calculateUserOwedAmountExcludingPaid(receiptId, userIdStr);
                 
                 // Get user's name for payment info (needed for item payment display)
                 database.UserDAO userDAO = new database.UserDAO();
@@ -1300,6 +1313,7 @@ public class ReceiptController {
                     .put("amountPaid", remainingAmount)
                     .put("paidAmount", newPaidAmount)
                     .put("owedAmount", newOwedAmount)
+                    .put("owedAmountExcludingPaid", newOwedAmountExcludingPaid)
                     .put("receiptCompleted", isCompleted)
                     .put("itemPaymentInfo", itemPaymentInfo); // Include payment info to avoid reload
                 

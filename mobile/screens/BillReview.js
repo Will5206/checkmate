@@ -16,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomNavBar from '../components/BottomNavBar';
 import { colors, spacing, typography } from '../styles/theme';
-import { createReceipt, claimItem, unclaimItem, getItemAssignments, payReceipt, addParticipantsToReceipt } from '../services/receiptsService';
+import { createReceipt, claimItem, unclaimItem, getItemAssignments, payReceipt, addParticipantsToReceipt, getReceiptDetails } from '../services/receiptsService';
 import { getFriendsList } from '../services/friendsService';
 
 export default function BillReview() {
@@ -54,8 +54,10 @@ export default function BillReview() {
   const [isUploader, setIsUploader] = useState(false);
   const [itemAssignments, setItemAssignments] = useState({}); // itemId -> quantity
   const [itemPaymentInfo, setItemPaymentInfo] = useState({}); // itemId -> {paidBy, payerName, paidAt}
-  const [owedAmount, setOwedAmount] = useState(0);
+  const [owedAmount, setOwedAmount] = useState(0); // Total amount for "Your Share" and "What You Paid For"
+  const [owedAmountExcludingPaid, setOwedAmountExcludingPaid] = useState(0); // Remaining amount owed after subtracting paid items
   const [userHasPaid, setUserHasPaid] = useState(false); // Boolean: true only after payment is fully processed
+  const [isReceiptComplete, setIsReceiptComplete] = useState(false); // Track if receipt is complete (all items paid)
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
   const [claimingItems, setClaimingItems] = useState(new Set()); // Track items being claimed to prevent double-clicks
   const scrollViewRef = useRef(null);
@@ -153,8 +155,26 @@ export default function BillReview() {
     if (isFromActivity && receiptId) {
       console.log('Loading item assignments and payment info for receiptId:', receiptId);
       loadItemAssignments();
+      // Also check if receipt is complete
+      checkReceiptCompleteStatus();
     }
   }, [isFromActivity, receiptId]);
+  
+  // Function to check if receipt is complete
+  const checkReceiptCompleteStatus = React.useCallback(async () => {
+    if (!receiptId) return;
+    
+    try {
+      const response = await getReceiptDetails(receiptId);
+      if (response.success && response.receipt) {
+        const isComplete = response.receipt.complete === true || response.receipt.complete === 1 || response.receipt.complete === '1';
+        setIsReceiptComplete(isComplete);
+        console.log('Receipt complete status:', isComplete, 'for receiptId:', receiptId);
+      }
+    } catch (error) {
+      console.error('Error checking receipt complete status:', error);
+    }
+  }, [receiptId]);
   
   // Also reload when screen comes into focus to get latest payment status and item claims
   // This ensures we see updates when someone else claims items
@@ -163,10 +183,11 @@ export default function BillReview() {
       if (isFromActivity && receiptId) {
         console.log('BillReview screen focused - reloading payment info and item assignments');
         loadItemAssignments();
+        checkReceiptCompleteStatus();
       }
     });
     return unsubscribe;
-  }, [navigation, isFromActivity, receiptId, loadItemAssignments]);
+  }, [navigation, isFromActivity, receiptId, loadItemAssignments, checkReceiptCompleteStatus]);
 
   const loadItemAssignments = React.useCallback(async () => {
     if (!receiptId) return;
@@ -207,7 +228,9 @@ export default function BillReview() {
         
         setItemAssignments(expandedAssignments);
         const newOwedAmount = response.owedAmount || 0;
+        const newOwedAmountExcludingPaid = response.owedAmountExcludingPaid || 0;
         setOwedAmount(newOwedAmount);
+        setOwedAmountExcludingPaid(newOwedAmountExcludingPaid);
         
         // Store payment info for all items - this shows which items are paid and by whom
         // Map payment info from original itemIds to expanded itemIds
@@ -293,6 +316,7 @@ export default function BillReview() {
       if (response.success) {
         // Update owedAmount from server
         setOwedAmount(response.owedAmount || 0);
+        setOwedAmountExcludingPaid(response.owedAmountExcludingPaid || 0);
         // Reload assignments to get latest state (including other users' claims)
         // Use a small delay to allow backend async update to complete
         setTimeout(async () => {
@@ -325,7 +349,7 @@ export default function BillReview() {
     
     Alert.alert(
       'Confirm Payment',
-      `Pay $${owedAmount.toFixed(2)} for your portion of this receipt?`,
+      `Pay $${owedAmountExcludingPaid.toFixed(2)} for your portion of this receipt?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -340,7 +364,9 @@ export default function BillReview() {
                 
                 // Update owed amount
                 const newOwedAmount = response.owedAmount || 0;
+                const newOwedAmountExcludingPaid = response.owedAmountExcludingPaid || 0;
                 setOwedAmount(newOwedAmount);
+                setOwedAmountExcludingPaid(newOwedAmountExcludingPaid);
                 
                 // Update item payment info from response
                 if (response.itemPaymentInfo) {
@@ -818,8 +844,8 @@ export default function BillReview() {
                         isPaid && styles.itemRowPaid,
                         isClaiming && styles.itemRowProcessing
                       ]}
-                      onPress={isFromActivity && !isPaid && !isClaiming ? () => handleToggleItemClaim(itemId) : undefined}
-                      disabled={!isFromActivity || isPaid || isClaiming}
+                      onPress={isFromActivity && !isPaid && !isClaiming && !isReceiptComplete ? () => handleToggleItemClaim(itemId) : undefined}
+                      disabled={!isFromActivity || isPaid || isClaiming || isReceiptComplete}
                       activeOpacity={isFromActivity && !isPaid && !isClaiming ? 0.7 : 1}
                     >
                       <View style={styles.itemInfo}>
@@ -834,7 +860,7 @@ export default function BillReview() {
                             {isPaid && (
                               <Text style={styles.paidByText}>Paid by {payerName || 'Someone'}</Text>
                             )}
-                            {!isPaid && isFromActivity && (
+                            {!isPaid && isFromActivity && !isReceiptComplete && (
                               <View style={[styles.claimBadge, isClaimed && styles.claimBadgeActive]}>
                                 <Ionicons 
                                   name={isClaimed ? "checkmark-circle" : "ellipse-outline"} 
@@ -862,8 +888,8 @@ export default function BillReview() {
           </View>
         </View>
 
-        {/* Your Portion - Payment Section (only shown when viewing from Activity and not paid) */}
-        {isFromActivity && !userHasPaid && (
+        {/* Your Portion - Payment Section (only shown when viewing from Activity, not paid, and receipt not complete) */}
+        {isFromActivity && !userHasPaid && !isReceiptComplete && (
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>Your Portion</Text>
@@ -871,17 +897,32 @@ export default function BillReview() {
             <View style={styles.cardContent}>
               <View style={styles.breakdownRow}>
                 <Text style={styles.totalLabelBold}>Amount Owed</Text>
-                <Text style={styles.totalValueBold}>${owedAmount.toFixed(2)}</Text>
+                <Text style={styles.totalValueBold}>${owedAmountExcludingPaid.toFixed(2)}</Text>
               </View>
               {Object.keys(itemAssignments).length === 0 && (
                 <Text style={styles.hintText}>Tap items above to claim them and calculate your portion</Text>
               )}
-              {owedAmount > 0.01 && (
+              {owedAmountExcludingPaid > 0.01 && (
                 <TouchableOpacity style={styles.payButton} onPress={handlePay}>
                   <Ionicons name="card-outline" size={20} color="#fff" />
-                  <Text style={styles.payButtonText}>Pay ${owedAmount.toFixed(2)}</Text>
+                  <Text style={styles.payButtonText}>Pay ${owedAmountExcludingPaid.toFixed(2)}</Text>
                 </TouchableOpacity>
               )}
+            </View>
+          </View>
+        )}
+
+        {/* Completed Receipt Indicator - Shown when receipt is complete */}
+        {isFromActivity && isReceiptComplete && (
+          <View style={styles.completedCard}>
+            <View style={styles.completedHeader}>
+              <View style={styles.completedBadge}>
+                <Ionicons name="checkmark-circle" size={24} color="#10B981" />
+                <Text style={styles.completedTitle}>Receipt Completed</Text>
+              </View>
+              <Text style={styles.completedSubtext}>
+                All items have been paid for. This receipt is now in your history.
+              </Text>
             </View>
           </View>
         )}
@@ -1479,6 +1520,34 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     marginTop: spacing.sm,
     textAlign: 'center',
+  },
+  completedCard: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 12,
+    padding: spacing.lg,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+  },
+  completedHeader: {
+    alignItems: 'center',
+  },
+  completedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  completedTitle: {
+    fontSize: typography.sizes.lg,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  completedSubtext: {
+    fontSize: typography.sizes.sm,
+    color: '#047857',
+    textAlign: 'center',
+    lineHeight: 20,
   },
   emptyItemsContainer: {
     padding: spacing.lg,

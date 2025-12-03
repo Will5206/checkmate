@@ -727,6 +727,103 @@ public class ReceiptDAO {
     }
 
     /**
+     * Calculate the total amount owed by a user for a receipt, EXCLUDING items that have been paid for.
+     * This is used for the "Amount Owed" section to show remaining balance after payments.
+     * Items with paid_for = 1 or paid_by IS NOT NULL are excluded from the calculation.
+     * 
+     * @param receiptId The receipt ID
+     * @param userId The user ID (VARCHAR(36))
+     * @return The remaining amount owed (excluding paid items), or 0 if no unpaid items assigned
+     */
+    public float calculateUserOwedAmountExcludingPaid(int receiptId, String userId) {
+        // Similar to calculateUserOwedAmount, but exclude items that are paid for
+        // Use a simpler approach: get total owed, then subtract paid items
+        // This avoids complex CASE statements that might cause ResultSet issues
+        
+        // First, get the total owed amount (includes all assigned items)
+        float totalOwed = calculateUserOwedAmount(receiptId, userId);
+        
+        if (totalOwed <= 0.01f) {
+            return 0.0f; // No items assigned or already paid
+        }
+        
+        // Now calculate the value of paid items assigned to this user
+        String sql = "SELECT " +
+                     "  COALESCE(SUM(ri.price * ia.quantity), 0) as paid_items_subtotal, " +
+                     "  COALESCE(SUM(ri.price * ri.quantity), 0) as total_subtotal, " +
+                     "  r.tax_amount, " +
+                     "  r.tip_amount " +
+                     "FROM receipt_items ri " +
+                     "INNER JOIN item_assignments ia ON ri.item_id = ia.item_id AND ia.user_id = ? " +
+                     "INNER JOIN receipts r ON ri.receipt_id = r.receipt_id " +
+                     "WHERE ri.receipt_id = ? " +
+                     "  AND (ri.paid_for = 1 OR ri.paid_by IS NOT NULL)";
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, userId);
+            pstmt.setInt(2, receiptId);
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    java.math.BigDecimal paidItemsSubtotal = rs.getBigDecimal("paid_items_subtotal");
+                    java.math.BigDecimal totalSubtotal = rs.getBigDecimal("total_subtotal");
+                    java.math.BigDecimal taxAmount = rs.getBigDecimal("tax_amount");
+                    java.math.BigDecimal tipAmount = rs.getBigDecimal("tip_amount");
+                    
+                    if (paidItemsSubtotal == null || paidItemsSubtotal.compareTo(java.math.BigDecimal.ZERO) == 0) {
+                        // No paid items assigned to this user - return full amount
+                        return totalOwed;
+                    }
+                    
+                    if (totalSubtotal == null || totalSubtotal.compareTo(java.math.BigDecimal.ZERO) == 0) {
+                        return totalOwed;
+                    }
+                    
+                    // Calculate proportion of paid items
+                    java.math.BigDecimal proportion = paidItemsSubtotal.divide(
+                        totalSubtotal,
+                        10,
+                        java.math.RoundingMode.HALF_UP
+                    );
+                    
+                    // Calculate proportional tax and tip for paid items
+                    java.math.BigDecimal paidTax = (taxAmount != null ? taxAmount : java.math.BigDecimal.ZERO)
+                        .multiply(proportion)
+                        .setScale(2, java.math.RoundingMode.HALF_UP);
+                    
+                    java.math.BigDecimal paidTip = (tipAmount != null ? tipAmount : java.math.BigDecimal.ZERO)
+                        .multiply(proportion)
+                        .setScale(2, java.math.RoundingMode.HALF_UP);
+                    
+                    // Total paid amount (items + tax + tip)
+                    java.math.BigDecimal totalPaid = paidItemsSubtotal
+                        .add(paidTax)
+                        .add(paidTip)
+                        .setScale(2, java.math.RoundingMode.HALF_UP);
+                    
+                    // Remaining owed = total owed - paid amount
+                    java.math.BigDecimal remaining = java.math.BigDecimal.valueOf(totalOwed)
+                        .subtract(totalPaid)
+                        .setScale(2, java.math.RoundingMode.HALF_UP);
+                    
+                    // Return 0 if negative (shouldn't happen, but be safe)
+                    return remaining.compareTo(java.math.BigDecimal.ZERO) > 0 ? remaining.floatValue() : 0.0f;
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[ReceiptDAO] Error calculating user owed amount excluding paid: " + e.getMessage());
+            e.printStackTrace();
+            // Fallback: return the total owed amount if calculation fails
+            return totalOwed;
+        }
+        
+        // If no paid items found, return full amount owed
+        return totalOwed;
+    }
+
+    /**
      * Get all pending receipts for a specific user.
      * 
      * CRITICAL: This method uses ONLY the 'complete' column to determine if a receipt is pending.
