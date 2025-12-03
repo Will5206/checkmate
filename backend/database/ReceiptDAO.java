@@ -547,25 +547,27 @@ public class ReceiptDAO {
 
     /**
      * Get all pending receipts for a specific user.
-     * A receipt is pending for a user if they are a participant with status 'pending'.
-     * Excludes receipts that were uploaded by the user (they shouldn't see their own receipts as pending).
+     * A receipt is pending for a user if they are a participant with status 'pending' or 'accepted' 
+     * AND the receipt status is not 'completed'.
+     * This includes receipts uploaded by the user - they should see their own receipts in Pending 
+     * until everyone has paid and the receipt moves to History.
      * 
      * @param userId The user's ID (VARCHAR(36))
      * @return List of Receipt objects
      */
     public List<Receipt> getPendingReceiptsForUser(String userId) {
+        // FIX 3: Include both 'pending' and 'accepted' status, exclude completed receipts
         String sql = "SELECT r.* FROM receipts r " +
                      "INNER JOIN receipt_participants rp ON r.receipt_id = rp.receipt_id " +
-                     "WHERE rp.user_id = ? AND rp.status = 'pending' AND r.uploaded_by != ? " +
+                     "WHERE rp.user_id = ? AND rp.status IN ('pending', 'accepted') AND r.status != 'completed' " +
                      "ORDER BY r.created_at DESC";
         
         List<Receipt> receipts = new ArrayList<>();
 
         try (Connection conn = dbConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
-
+            
             pstmt.setString(1, userId);
-            pstmt.setString(2, userId); // Also exclude receipts uploaded by this user
 
             try (ResultSet rs = pstmt.executeQuery()) {
                 System.out.println("[ReceiptDAO] Getting pending receipts for user " + userId);
@@ -591,23 +593,20 @@ public class ReceiptDAO {
     }
 
     /**
-     * Get all receipts for a specific user (accepted, declined, or uploaded by them).
-     * Includes receipts where the user is a participant with status 'accepted' or 'declined',
-     * or receipts they uploaded.
+     * Get all receipts for a specific user (History - completed receipts only).
+     * Shows receipts where the receipt status is 'completed' for all participants.
+     * This ensures receipts only move to History when everyone has paid.
      * 
      * @param userId The user's ID (VARCHAR(36))
-     * @return List of Receipt objects with participant status information
+     * @return List of Receipt objects
      */
     public List<Receipt> getAllReceiptsForUser(String userId) {
-        // Get receipts where:
-        // 1. User is a participant with status 'accepted' or 'completed'
-        // 2. OR user uploaded the receipt (they should see all their receipts regardless of status)
-        // This ensures uploaders see their newly created receipts immediately
+        // FIX 3B: Only show receipts where status is 'completed'
+        // This means ALL participants have paid
         String sql = "SELECT DISTINCT r.* " +
                      "FROM receipts r " +
-                     "LEFT JOIN receipt_participants rp ON r.receipt_id = rp.receipt_id AND rp.user_id = ? " +
-                     "WHERE (rp.user_id = ? AND rp.status IN ('accepted', 'completed')) " +
-                     "   OR r.uploaded_by = ? " +
+                     "INNER JOIN receipt_participants rp ON r.receipt_id = rp.receipt_id " +
+                     "WHERE rp.user_id = ? AND r.status = 'completed' " +
                      "ORDER BY r.created_at DESC";
         
         List<Receipt> receipts = new ArrayList<>();
@@ -616,11 +615,9 @@ public class ReceiptDAO {
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
 
             pstmt.setString(1, userId);
-            pstmt.setString(2, userId);
-            pstmt.setString(3, userId);
 
             try (ResultSet rs = pstmt.executeQuery()) {
-                System.out.println("[ReceiptDAO] Getting all receipts for user " + userId);
+                System.out.println("[ReceiptDAO] Getting all receipts (History) for user " + userId);
                 int count = 0;
                 while (rs.next()) {
                     Receipt receipt = mapResultSetToReceipt(rs);
@@ -630,9 +627,9 @@ public class ReceiptDAO {
                     }
                     receipts.add(receipt);
                     count++;
-                    System.out.println("[ReceiptDAO] Added receipt " + receipt.getReceiptId() + " (total so far: " + count + ")");
+                    System.out.println("[ReceiptDAO] Added history receipt " + receipt.getReceiptId() + " (total so far: " + count + ")");
                 }
-                System.out.println("[ReceiptDAO] Found total of " + count + " receipts for user " + userId);
+                System.out.println("[ReceiptDAO] Found total of " + count + " history receipts for user " + userId);
             }
         } catch (SQLException e) {
             System.err.println("Error getting all receipts for user: " + e.getMessage());
@@ -795,6 +792,37 @@ public class ReceiptDAO {
         }
 
         return false;
+    }
+
+    /**
+     * Update status for all participants of a receipt.
+     * Used when receipt is completed to move it to History for everyone.
+     * 
+     * FIX 3C: New method to update all participants at once
+     * 
+     * @param receiptId The receipt ID
+     * @param status New status (typically 'completed')
+     * @return true if update was successful
+     */
+    public boolean updateAllParticipantsStatus(int receiptId, String status) {
+        String sql = "UPDATE receipt_participants SET status = ?, updated_at = CURRENT_TIMESTAMP " +
+                     "WHERE receipt_id = ?";
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            pstmt.setString(1, status);
+            pstmt.setInt(2, receiptId);
+            
+            int affectedRows = pstmt.executeUpdate();
+            System.out.println("Updated status to '" + status + "' for " + affectedRows + " participants of receipt " + receiptId);
+            return affectedRows > 0;
+            
+        } catch (SQLException e) {
+            System.err.println("Error updating all participants status: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
     }
 
     /**
@@ -1018,6 +1046,9 @@ public class ReceiptDAO {
     /**
      * Check if all participants have paid their full amount and mark receipt as completed if so.
      * 
+     * FIX 3D: When receipt is completed, update all participants status to 'completed'
+     * so receipt moves to History for everyone.
+     * 
      * @param receiptId The receipt ID
      * @return true if receipt was marked as completed, false otherwise
      */
@@ -1043,7 +1074,15 @@ public class ReceiptDAO {
 
         if (allPaid) {
             // Mark receipt as completed
-            return updateReceiptStatus(receiptId, "completed");
+            boolean receiptUpdated = updateReceiptStatus(receiptId, "completed");
+            
+            if (receiptUpdated) {
+                // FIX 3D: Mark all participants as 'completed' so receipt moves to History for everyone
+                updateAllParticipantsStatus(receiptId, "completed");
+                System.out.println("Receipt " + receiptId + " is now fully paid and completed");
+            }
+            
+            return receiptUpdated;
         }
 
         return false;
