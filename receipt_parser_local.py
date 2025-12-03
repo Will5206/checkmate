@@ -10,70 +10,30 @@ from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
 from PIL import Image
+from pillow_heif import register_heif_opener
 
-# Try to import pillow_heif for HEIC support (optional)
-try:
-    from pillow_heif import register_heif_opener
-    register_heif_opener()
-except ImportError:
-    # pillow_heif not available - HEIC images won't be supported
-    # but JPEG/PNG will still work
-    pass
+register_heif_opener()
 
-# Load environment variables - try multiple locations
-# First try openai_key.env (with override), then .env (with override), then environment variables
-load_dotenv("openai_key.env", override=True)  # override=True ensures this file takes precedence
-load_dotenv(".env", override=False)  # Don't override if openai_key.env already set it
+# Load environment variables from .env.openai_key file
+load_dotenv("openai_key.env")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
-    print("ERROR: OPENAI_API_KEY environment variable must be set.", file=sys.stderr)
-    print("Create an openai_key.env file with: OPENAI_API_KEY=your_key_here", file=sys.stderr)
-    print("Or set it in your .env file, or as an environment variable.", file=sys.stderr)
-    print(json.dumps({"error": "OPENAI_API_KEY not configured. Please set it in openai_key.env or .env file."}))
-    sys.exit(1)
+    raise ValueError(
+        "OPENAI_API_KEY environment variable must be set. "
+        "Create an openai_key.env file with your API key."
+    )
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 
-def encode_image(image_path: str, max_size: int = 2048) -> str:
-    """
-    Encode image to base64, with optional resizing for faster processing.
-    OpenAI vision models work well with smaller images, so we resize if needed.
-    This reduces API processing time and cost significantly.
-    """
-    # Open and check if resizing is needed
-    with Image.open(image_path) as img:
-        width, height = img.size
-        
-        # Resize if image is too large (reduces API processing time and cost)
-        if width > max_size or height > max_size:
-            # Maintain aspect ratio
-            if width > height:
-                new_width = max_size
-                new_height = int(height * (max_size / width))
-            else:
-                new_height = max_size
-                new_width = int(width * (max_size / height))
-            
-            # Resize and convert to RGB
-            img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            img_rgb = img_resized.convert("RGB")
-            
-            # Save resized image to temp file
-            temp_file = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-            img_rgb.save(temp_file.name, format="JPEG", quality=85, optimize=True)
-            image_path = temp_file.name
-    
-    # Encode to base64
+def encode_image(image_path: str) -> str:
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode("utf-8")
 
 
 if len(sys.argv) < 2:
-    error_msg = {"error": "Please provide an image path as an argument"}
-    print(json.dumps(error_msg), file=sys.stderr)
-    print(json.dumps(error_msg))
+    print(json.dumps({"error": "Please provide an image path as an argument"}))
     sys.exit(1)
 
 
@@ -88,23 +48,8 @@ def ensure_jpeg(input_path: str) -> str:
 
 # Image path from Java ReceiptController
 original_path = sys.argv[1]
-
-# Validate image file exists
-if not os.path.exists(original_path):
-    error_msg = {"error": f"Image file not found: {original_path}"}
-    print(json.dumps(error_msg), file=sys.stderr)
-    print(json.dumps(error_msg))
-    sys.exit(1)
-
-try:
-    jpeg_path = ensure_jpeg(original_path)
-    # Encode with automatic resizing for faster processing
-    base64_image = encode_image(jpeg_path, max_size=2048)  # Resize to max 2048px for faster API calls
-except Exception as e:
-    error_msg = {"error": f"Failed to process image: {str(e)}"}
-    print(json.dumps(error_msg), file=sys.stderr)
-    print(json.dumps(error_msg))
-    sys.exit(1)
+jpeg_path = ensure_jpeg(original_path)
+base64_image = encode_image(jpeg_path)
 
 prompt = """
 Extract the receipt information from the image.
@@ -132,7 +77,7 @@ Return ONLY valid JSON, no extra text, in this format:
 Rules:
 - For each item, raw_line must be the exact text of that line on the receipt.
 - price MUST be the numeric amount (including its sign) at the end of raw_line for that same line.
-- Negative prices ARE allowed (discounts, happy hour, comps) and must stay negative.
+- Negative prices ARE allowed (discounts, happy hour, comps) and must stay negative. a line with a negative price should be added to the total price (discount applied) of the line above, and that lines price per item should be re-calculated if needed
 - Lines that correspond to tip, gratuity, or service charge (e.g. "Tip", "Gratuity", "Service Charge", "Serv Chg")
   should be used ONLY to set "tip" and must NOT be included in the items array.
 - If there is no tip/gratuity/service-charge line or you are not sure, set tip to 0.
@@ -140,42 +85,24 @@ Rules:
   for that item.
 """
 
-# Call vision model - using gpt-4o-mini for faster/cheaper parsing (still very accurate)
-try:
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",  # Faster and cheaper than gpt-4o, still accurate for receipt parsing
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}"
-                        },
+# Call vision model
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{base64_image}"
                     },
-                ],
-            }
-        ],
-    )
-except Exception as e:
-    error_str = str(e)
-    # Make error messages more user-friendly
-    if "billing_not_active" in error_str or "billing" in error_str.lower():
-        error_msg = {"error": "OpenAI account billing is not active. Please add a payment method at https://platform.openai.com/account/billing"}
-    elif "429" in error_str or "rate limit" in error_str.lower():
-        error_msg = {"error": "OpenAI API rate limit exceeded. Please try again in a few moments."}
-    elif "401" in error_str or "authentication" in error_str.lower() or "invalid" in error_str.lower():
-        error_msg = {"error": "OpenAI API key is invalid. Please check your API key in openai_key.env"}
-    elif "quota" in error_str.lower():
-        error_msg = {"error": "OpenAI API quota exceeded. Please check your account usage at https://platform.openai.com/usage"}
-    else:
-        error_msg = {"error": f"OpenAI API error: {error_str}"}
-    
-    print(json.dumps(error_msg), file=sys.stderr)
-    print(json.dumps(error_msg))
-    sys.exit(1)
+                },
+            ],
+        }
+    ],
+)
 
 raw = response.choices[0].message.content.strip()
 
@@ -219,11 +146,15 @@ def normalize_numbers(data: dict) -> dict:
 
 
 def check_totals(data: dict) -> None:
+    """
+    Check if item line totals sum to subtotal.
+    Note: This runs BEFORE converting to unit prices, so prices are still line totals.
+    """
     items_sum = sum(item.get("price", 0.0) for item in data.get("items", []))
     if round(items_sum, 2) != round(data["subtotal"], 2):
         print("Warning: subtotal mismatch", items_sum, "vs", data["subtotal"], file=sys.stderr)
     if round(data["subtotal"] + data["tax"] + data.get("tip", 0.0), 2) != round(
-        data["total"], 2
+            data["total"], 2
     ):
         print(
             "Warning: total mismatch",
@@ -243,6 +174,32 @@ def override_price_from_raw_line(data: dict) -> dict:
         m = re.search(r"(-?\d+\.\d{2})\s*$", line)
         if m:
             item["price"] = m.group(1)
+    return data
+
+
+def convert_line_totals_to_unit_prices(data: dict) -> dict:
+    """
+    Convert line total prices to unit prices by dividing by quantity.
+
+    Receipts show line totals (e.g., "2 ItemA 10.00" = $10 total for 2 items),
+    but the system expects unit prices (price per item) that will be multiplied by qty.
+
+    Args:
+        data: Receipt data dictionary
+
+    Returns:
+        Data dictionary with prices converted to unit prices
+    """
+    for item in data.get("items", []):
+        qty = item.get("qty", 1)
+        line_total = item.get("price", 0.0)
+
+        # Convert line total to unit price
+        if qty > 0:
+            unit_price = line_total / qty
+            item["price"] = unit_price
+        # If qty is 0 or invalid, keep price as is (will be caught by validation)
+
     return data
 
 
@@ -305,17 +262,12 @@ if unknown_items:
     print("Items needing manual price:", unknown_items, file=sys.stderr)
 
 # Post-processing pipeline
-try:
-    override_price_from_raw_line(data)
-    validate_receipt(data)
-    normalize_numbers(data)
-    apply_discounts_and_strip_tip(data)
-    check_totals(data)
-except Exception as e:
-    error_msg = {"error": f"Error processing receipt data: {str(e)}"}
-    print(json.dumps(error_msg), file=sys.stderr)
-    print(json.dumps(error_msg))
-    sys.exit(1)
+override_price_from_raw_line(data)
+validate_receipt(data)
+normalize_numbers(data)
+apply_discounts_and_strip_tip(data)
+check_totals(data)  # Check totals while prices are still line totals
+convert_line_totals_to_unit_prices(data)  # Convert line totals to unit prices (after validation)
 
 # Final output for Java side: clean JSON only
 print(json.dumps(data))
