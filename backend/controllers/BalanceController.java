@@ -243,8 +243,6 @@ public class BalanceController {
                     sendResponse(exchange, 500, "{\"success\": false, \"error\": \"Failed to cash out\"}");
                 }
 
-            } catch (NumberFormatException e) {
-                sendResponse(exchange, 400, "{\"success\": false, \"error\": \"Invalid amount format\"}");
             } catch (IllegalArgumentException e) {
                 sendResponse(exchange, 400, String.format("{\"success\": false, \"error\": \"%s\"}", e.getMessage()));
             } catch (Exception e) {
