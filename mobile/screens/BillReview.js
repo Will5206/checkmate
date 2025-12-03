@@ -314,14 +314,11 @@ export default function BillReview() {
       }
       
       if (response.success) {
-        // Update owedAmount from server
+        // Update owedAmount from server (response already has the correct values)
         setOwedAmount(response.owedAmount || 0);
         setOwedAmountExcludingPaid(response.owedAmountExcludingPaid || 0);
-        // Reload assignments to get latest state (including other users' claims)
-        // Use a small delay to allow backend async update to complete
-        setTimeout(async () => {
-          await loadItemAssignments();
-        }, 500);
+        // No need to reload - optimistic update already shows the claim, and amounts are correct
+        // Only reload if we need to see other users' claims (which happens on screen focus anyway)
       } else {
         // Rollback optimistic update on error
         setItemAssignments(previousAssignments);

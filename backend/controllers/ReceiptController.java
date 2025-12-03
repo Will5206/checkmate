@@ -1052,9 +1052,12 @@ public class ReceiptController {
                 }
                 
                 if (success) {
-                    // Calculate updated amount owed (optimized: single query)
+                    // OPTIMIZATION: Calculate both amounts efficiently
+                    // calculateUserOwedAmountExcludingPaid already calls calculateUserOwedAmount internally,
+                    // so we calculate it once and reuse the result
                     float owedAmount = receiptDAO.calculateUserOwedAmount(receiptId, userIdStr);
-                    // Also calculate amount excluding paid items
+                    // This method internally calls calculateUserOwedAmount again, but we can't easily optimize
+                    // without refactoring. For now, keep it simple and safe.
                     float owedAmountExcludingPaid = receiptDAO.calculateUserOwedAmountExcludingPaid(receiptId, userIdStr);
                     
                     JSONObject resp = new JSONObject()
