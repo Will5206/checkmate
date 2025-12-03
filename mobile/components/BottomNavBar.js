@@ -15,10 +15,10 @@ export default function BottomNavBar() {
       activeIcon: 'trophy',
     },
     {
-      name: 'Activity',
+      name: 'History',
       screen: 'Activity', 
-      icon: 'time-outline',
-      activeIcon: 'people',
+      icon: 'archive-outline',
+      activeIcon: 'archive',
     },
     {
       name: 'Scan',

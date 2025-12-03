@@ -180,7 +180,7 @@ export default function ActivityScreen() {
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Activity</Text>
+          <Text style={styles.headerTitle}>History</Text>
           <Text style={styles.headerSubtitle}>Past transactions</Text>
         </View>
 
