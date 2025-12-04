@@ -19,7 +19,26 @@ import java.net.InetSocketAddress;
  */
 public class Server {
     
-    private static final int PORT = 8080;
+    // Use PORT environment variable if available (for Railway/Heroku), otherwise default to 8080
+    private static final int PORT = getPortFromEnv();
+    
+    private static int getPortFromEnv() {
+        String portStr = System.getenv("PORT");
+        if (portStr == null || portStr.isEmpty()) {
+            return 8080;
+        }
+        try {
+            int port = Integer.parseInt(portStr);
+            if (port < 1 || port > 65535) {
+                System.err.println("Invalid PORT: " + portStr + ", using default 8080");
+                return 8080;
+            }
+            return port;
+        } catch (NumberFormatException e) {
+            System.err.println("Invalid PORT format: " + portStr + ", using default 8080");
+            return 8080;
+        }
+    }
 
 
 
@@ -37,11 +56,17 @@ public class Server {
             // Uncomment this line only if you need to initialize a fresh database
             // dbConnection.initializeSchema("backend/database/schema.sql");
             
-            // create HTTP server
-            HttpServer server = HttpServer.create(new InetSocketAddress(PORT), 0);
+            // create HTTP server - bind to all interfaces (0.0.0.0) so it's accessible from network
+            System.out.println("🟣 [SERVER INIT] Creating HTTP server on port " + PORT);
+            System.out.println("🟣 [SERVER INIT] Binding to 0.0.0.0 (all interfaces) to allow network access");
+            InetSocketAddress address = new InetSocketAddress("0.0.0.0", PORT);
+            HttpServer server = HttpServer.create(address, 0);
+            System.out.println("🟣 [SERVER INIT] HTTP server created and bound to " + address);
             
             // register endpoints
+            System.out.println("🟣 [SERVER INIT] Registering endpoints...");
             server.createContext("/api/auth/login", new AuthController.LoginHandler());
+            System.out.println("🟣 [SERVER INIT] Registered: /api/auth/login");
             server.createContext("/api/auth/signup", new AuthController.SignupHandler());
             server.createContext("/api/friends/add", new FriendController.AddFriendHandler());
             server.createContext("/api/friends/add-by-email", new FriendController.AddFriendByEmailHandler());
@@ -66,13 +91,18 @@ public class Server {
             server.createContext("/api/balance/cashout", new BalanceController.CashOutHandler());
 
             //start server
+            System.out.println("🟣 [SERVER INIT] Starting server...");
             server.setExecutor(null);
             server.start();
-            
+            System.out.println("🟣 [SERVER INIT] Server started successfully");
 
-
+            System.out.println("═══════════════════════════════════════════════════════════");
             System.out.println("CheckMate Server started on port " + PORT);
-            System.out.println("Login endpoint: http://localhost:" + PORT + "/api/auth/login");
+            System.out.println("═══════════════════════════════════════════════════════════");
+            System.out.println("Server is listening on ALL interfaces (0.0.0.0:" + PORT + ")");
+            System.out.println("Local access:  http://localhost:" + PORT + "/api/auth/login");
+            System.out.println("Network access: http://YOUR_IP:" + PORT + "/api/auth/login");
+            System.out.println("═══════════════════════════════════════════════════════════");
             System.out.println("Signup endpoint: http://localhost:" + PORT + "/api/auth/signup");
             System.out.println("Add friend: http://localhost:" + PORT + "/api/friends/add?userId=1&friendId=2");
             System.out.println("Remove friend: http://localhost:" + PORT + "/api/friends/remove?userId=1&friendId=2");

@@ -13,6 +13,9 @@ import { API_BASE_URL } from '../config';
  * @returns {Promise<Object>} Response with success status and receipt data
  */
 export async function createReceipt(receiptData) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+  
   try {
     const userId = await AsyncStorage.getItem('userId');
 
@@ -31,12 +34,33 @@ export async function createReceipt(receiptData) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(receiptData),
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
 
     const data = await response.json();
     return data;
 
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('Create receipt error: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('Create receipt error:', error);
     return {
       success: false,
@@ -50,6 +74,9 @@ export async function createReceipt(receiptData) {
  * @returns {Promise<Object>} Response with success status and receipts array
  */
 export async function getPendingReceipts() {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+  
   try {
     const userId = await AsyncStorage.getItem('userId');
 
@@ -67,13 +94,34 @@ export async function getPendingReceipts() {
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
       }
     );
+
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
 
     const data = await response.json();
     return data;
 
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('Get pending receipts error: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('Get pending receipts error:', error);
     return {
       success: false,
@@ -88,6 +136,9 @@ export async function getPendingReceipts() {
  * @returns {Promise<Object>} Response with success status
  */
 export async function acceptReceipt(receiptId) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+  
   try {
     const userId = await AsyncStorage.getItem('userId');
 
@@ -105,13 +156,34 @@ export async function acceptReceipt(receiptId) {
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
       }
     );
+
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
 
     const data = await response.json();
     return data;
 
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('Accept receipt error: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('Accept receipt error:', error);
     return {
       success: false,
@@ -126,6 +198,9 @@ export async function acceptReceipt(receiptId) {
  * @returns {Promise<Object>} Response with success status
  */
 export async function declineReceipt(receiptId) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+  
   try {
     const userId = await AsyncStorage.getItem('userId');
 
@@ -143,13 +218,34 @@ export async function declineReceipt(receiptId) {
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
       }
     );
+
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
 
     const data = await response.json();
     return data;
 
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('Decline receipt error: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('Decline receipt error:', error);
     return {
       success: false,
@@ -180,14 +276,30 @@ export async function getActivityReceipts() {
     const url = `${API_BASE_URL}/receipts/activity?userId=${encodeURIComponent(userId)}`;
     console.log('[receiptsService] STEP A4: Making fetch request to:', url);
     
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+    
     const response = await fetch(url, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
       },
+      signal: controller.signal,
     });
 
+    clearTimeout(timeoutId);
     console.log('[receiptsService] STEP A5: Fetch response status:', response.status);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
+    
     const data = await response.json();
     console.log('[receiptsService] STEP A6: Parsed JSON response:', {
       success: data.success,
@@ -198,6 +310,13 @@ export async function getActivityReceipts() {
     return data;
 
   } catch (error) {
+    if (error.name === 'AbortError') {
+      console.error('[receiptsService] EXCEPTION: Get activity receipts error: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('[receiptsService] EXCEPTION: Get activity receipts error:', error);
     return {
       success: false,
@@ -212,6 +331,9 @@ export async function getActivityReceipts() {
  * @returns {Promise<Object>} Response with success status and full receipt data including items
  */
 export async function getReceiptDetails(receiptId) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+  
   try {
     const userId = await AsyncStorage.getItem('userId');
 
@@ -229,13 +351,34 @@ export async function getReceiptDetails(receiptId) {
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
       }
     );
+
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
 
     const data = await response.json();
     return data;
 
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('Get receipt details error: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('Get receipt details error:', error);
     return {
       success: false,
@@ -252,6 +395,9 @@ export async function getReceiptDetails(receiptId) {
  * @returns {Promise<Object>} Response with success status and owed amount
  */
 export async function claimItem(receiptId, itemId, quantity = 1) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+  
   try {
     const userId = await AsyncStorage.getItem('userId');
 
@@ -269,13 +415,34 @@ export async function claimItem(receiptId, itemId, quantity = 1) {
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
       }
     );
+
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
 
     const data = await response.json();
     return data;
 
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('Claim item error: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('Claim item error:', error);
     return {
       success: false,
@@ -291,6 +458,9 @@ export async function claimItem(receiptId, itemId, quantity = 1) {
  * @returns {Promise<Object>} Response with success status and owed amount
  */
 export async function unclaimItem(receiptId, itemId) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+  
   try {
     const userId = await AsyncStorage.getItem('userId');
 
@@ -308,13 +478,34 @@ export async function unclaimItem(receiptId, itemId) {
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
       }
     );
+
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
 
     const data = await response.json();
     return data;
 
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('Unclaim item error: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('Unclaim item error:', error);
     return {
       success: false,
@@ -342,12 +533,28 @@ export async function getItemAssignments(receiptId) {
     const url = `${API_BASE_URL}/receipts/items/assignments?receiptId=${receiptId}&userId=${encodeURIComponent(userId)}`;
     console.log('Fetching item assignments from:', url);
     
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+    
     const response = await fetch(url, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
       },
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
 
     // Check if response is actually JSON
     const contentType = response.headers.get('content-type');
@@ -364,6 +571,13 @@ export async function getItemAssignments(receiptId) {
     return data;
 
   } catch (error) {
+    if (error.name === 'AbortError') {
+      console.error('Get item assignments error: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('Get item assignments error:', error);
     return {
       success: false,
@@ -379,6 +593,9 @@ export async function getItemAssignments(receiptId) {
  * @returns {Promise<Object>} Response with success status
  */
 export async function addParticipantsToReceipt(receiptId, participantEmails) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+  
   try {
     const userId = await AsyncStorage.getItem('userId');
 
@@ -399,13 +616,34 @@ export async function addParticipantsToReceipt(receiptId, participantEmails) {
         body: JSON.stringify({
           participants: participantEmails,
         }),
+        signal: controller.signal,
       }
     );
+
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
 
     const data = await response.json();
     return data;
 
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('Error adding participants: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('Error adding participants:', error);
     return {
       success: false,
@@ -420,6 +658,9 @@ export async function addParticipantsToReceipt(receiptId, participantEmails) {
  * @returns {Promise<Object>} Response with success status and payment details
  */
 export async function payReceipt(receiptId) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+  
   try {
     const userId = await AsyncStorage.getItem('userId');
 
@@ -437,13 +678,34 @@ export async function payReceipt(receiptId) {
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
       }
     );
+
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
 
     const data = await response.json();
     return data;
 
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('Pay receipt error: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('Pay receipt error:', error);
     return {
       success: false,

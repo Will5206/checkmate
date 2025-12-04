@@ -1,6 +1,6 @@
 // API Configuration
 // This file can be customized per developer without affecting git
-// 
+//
 // IMPORTANT: 10.129.221.36 is a LOCAL NETWORK IP (private IP)
 // - It's only accessible on your local WiFi network
 // - It's NOT your public IP address
@@ -29,7 +29,7 @@ const getLocalIP = () => {
 
   // Use your computer's IP for physical device testing
   // Change this to localhost if testing on web/simulator
-  return 'http://10.129.221.36:8080/api';
+  return 'http://172.20.10.12:8080/api';
 };
 
 export const API_BASE_URL = getLocalIP();

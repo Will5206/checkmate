@@ -7,6 +7,9 @@ import { API_BASE_URL } from '../config';
  * @returns {Promise<Object>} Response with success status and friend data
  */
 export async function addFriendByEmail(email) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+  
   try {
     const userId = await AsyncStorage.getItem('userId');
     console.log('userId from AsyncStorage:', userId);
@@ -27,14 +30,35 @@ export async function addFriendByEmail(email) {
       headers: {
         'Content-Type': 'application/json',
       },
+      signal: controller.signal,
     });
 
+    clearTimeout(timeoutId);
     console.log('Response status:', response.status);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
+    
     const data = await response.json();
     console.log('Response data:', data);
     return data;
 
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('Add friend error: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('Add friend error:', error);
     return {
       success: false,
@@ -48,6 +72,9 @@ export async function addFriendByEmail(email) {
  * @returns {Promise<Object>} Response with friends array
  */
 export async function getFriendsList() {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+  
   try {
     const userId = await AsyncStorage.getItem('userId');
 
@@ -65,13 +92,34 @@ export async function getFriendsList() {
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
       }
     );
+
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
 
     const data = await response.json();
     return data;
 
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('Get friends list error: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('Get friends list error:', error);
     return {
       success: false,
@@ -85,6 +133,9 @@ export async function getFriendsList() {
  * @returns {Promise<Object>} Response with pendingRequests array
  */
 export async function getPendingFriendRequests() {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+  
   try {
     const userId = await AsyncStorage.getItem('userId');
 
@@ -102,13 +153,34 @@ export async function getPendingFriendRequests() {
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
       }
     );
+
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
 
     const data = await response.json();
     return data;
 
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('Get pending friend requests error: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('Get pending friend requests error:', error);
     return {
       success: false,
@@ -123,6 +195,9 @@ export async function getPendingFriendRequests() {
  * @returns {Promise<Object>} Response with success status
  */
 export async function acceptFriendRequest(friendId) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+  
   try {
     const userId = await AsyncStorage.getItem('userId');
 
@@ -140,13 +215,34 @@ export async function acceptFriendRequest(friendId) {
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
       }
     );
+
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
 
     const data = await response.json();
     return data;
 
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('Accept friend request error: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('Accept friend request error:', error);
     return {
       success: false,
@@ -161,6 +257,9 @@ export async function acceptFriendRequest(friendId) {
  * @returns {Promise<Object>} Response with success status
  */
 export async function declineFriendRequest(friendId) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+  
   try {
     const userId = await AsyncStorage.getItem('userId');
 
@@ -178,13 +277,34 @@ export async function declineFriendRequest(friendId) {
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
       }
     );
+
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
 
     const data = await response.json();
     return data;
 
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('Decline friend request error: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('Decline friend request error:', error);
     return {
       success: false,
@@ -199,6 +319,9 @@ export async function declineFriendRequest(friendId) {
  * @returns {Promise<Object>} Response with success status
  */
 export async function removeFriend(friendId) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+  
   try {
     console.log('🔴 [2/8] removeFriend service: friendId=', friendId);
     const userId = await AsyncStorage.getItem('userId');
@@ -221,15 +344,36 @@ export async function removeFriend(friendId) {
         headers: {
           'Content-Type': 'application/json',
         },
+        signal: controller.signal,
       }
     );
 
+    clearTimeout(timeoutId);
     console.log('🔴 [7.5/8] Remove friend response status:', response.status);
+    
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch (e) {
+        errorData = { success: false, message: `Server error: ${response.status} ${response.statusText}` };
+      }
+      return errorData;
+    }
+    
     const data = await response.json();
     console.log('🔴 [8/8] Remove friend response data:', data);
     return data;
 
   } catch (error) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      console.error('Remove friend error: Request timeout');
+      return {
+        success: false,
+        message: 'Request timeout. Please check your connection.',
+      };
+    }
     console.error('Remove friend error:', error);
     return {
       success: false,

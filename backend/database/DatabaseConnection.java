@@ -39,19 +39,31 @@ public class DatabaseConnection {
      * private constructor for singleton pattern
      */
     private DatabaseConnection() {
+        System.out.println("🔵 [DATABASE INIT] DatabaseConnection constructor called");
+        System.out.println("🔵 [DATABASE INIT] DB_URL: " + DB_URL.replace(DB_PASSWORD, "***"));
+        System.out.println("🔵 [DATABASE INIT] DB_USER: " + DB_USER);
+        
         try {
+            System.out.println("🔵 [DATABASE INIT] Loading MySQL JDBC driver...");
             Class.forName("com.mysql.cj.jdbc.Driver");
+            System.out.println("🔵 [DATABASE INIT] JDBC driver loaded successfully");
             
-
-
+            System.out.println("🔵 [DATABASE INIT] Attempting to connect to database...");
+            long connStartTime = System.currentTimeMillis();
             this.connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+            long connTime = System.currentTimeMillis() - connStartTime;
+            System.out.println("🔵 [DATABASE INIT] Database connection established in " + connTime + "ms");
             System.out.println("Database connection established successfully");
             
         } catch (ClassNotFoundException e) {
-            System.err.println("MySQL JDBC Driver not found");
+            System.err.println("🔴 [DATABASE INIT ERROR] MySQL JDBC Driver not found");
+            System.err.println("🔴 [DATABASE INIT ERROR] Message: " + e.getMessage());
             e.printStackTrace();
         } catch (SQLException e) {
-            System.err.println("Failed to connect to database");
+            System.err.println("🔴 [DATABASE INIT ERROR] Failed to connect to database");
+            System.err.println("🔴 [DATABASE INIT ERROR] Message: " + e.getMessage());
+            System.err.println("🔴 [DATABASE INIT ERROR] SQL State: " + e.getSQLState());
+            System.err.println("🔴 [DATABASE INIT ERROR] Error Code: " + e.getErrorCode());
             e.printStackTrace();
         }
     }
@@ -78,13 +90,62 @@ public class DatabaseConnection {
      * @throws SQLException if connection cannot be established
      */
     public synchronized Connection getConnection() throws SQLException {
+        System.out.println("🔵 [DATABASE STEP 1/4] DatabaseConnection.getConnection() called");
+        
         //check if connection is still valid - reconnect if needed
         //synchronized to prevent race conditions -------when multiple threads
         // check simultaneously
-        if (connection == null || connection.isClosed()) {
-            connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
-            System.out.println("Database connection established/reconnected");
+        System.out.println("🔵 [DATABASE STEP 2/4] Checking connection status...");
+        boolean needsReconnect = false;
+        
+        if (connection == null) {
+            System.out.println("🔵 [DATABASE STEP 2/4] Connection is null");
+            needsReconnect = true;
+        } else {
+            try {
+                if (connection.isClosed()) {
+                    System.out.println("🔵 [DATABASE STEP 2/4] Connection is closed");
+                    needsReconnect = true;
+                } else {
+                    // Test if connection is still valid (with 5 second timeout)
+                    System.out.println("🔵 [DATABASE STEP 2/4] Testing connection validity...");
+                    boolean isValid = connection.isValid(5);
+                    if (!isValid) {
+                        System.out.println("🔵 [DATABASE STEP 2/4] Connection is not valid");
+                        needsReconnect = true;
+                    } else {
+                        System.out.println("🔵 [DATABASE STEP 2/4] Connection is valid");
+                    }
+                }
+            } catch (SQLException e) {
+                System.err.println("🔴 [DATABASE STEP 2/4 ERROR] Error checking connection: " + e.getMessage());
+                needsReconnect = true;
+            }
         }
+        
+        if (needsReconnect) {
+            System.out.println("🔵 [DATABASE STEP 3/4] Creating new connection...");
+            System.out.println("🔵 [DATABASE STEP 3/4] DB_URL: " + DB_URL.replace(DB_PASSWORD, "***"));
+            System.out.println("🔵 [DATABASE STEP 3/4] DB_USER: " + DB_USER);
+            
+            long connStartTime = System.currentTimeMillis();
+            try {
+                connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+                long connTime = System.currentTimeMillis() - connStartTime;
+                System.out.println("🔵 [DATABASE STEP 3/4] Connection established in " + connTime + "ms");
+                System.out.println("Database connection established/reconnected");
+            } catch (SQLException e) {
+                System.err.println("🔴 [DATABASE STEP 3/4 ERROR] Failed to create connection:");
+                System.err.println("🔴 [DATABASE STEP 3/4 ERROR] Message: " + e.getMessage());
+                System.err.println("🔴 [DATABASE STEP 3/4 ERROR] SQL State: " + e.getSQLState());
+                System.err.println("🔴 [DATABASE STEP 3/4 ERROR] Error Code: " + e.getErrorCode());
+                throw e;
+            }
+        } else {
+            System.out.println("🔵 [DATABASE STEP 3/4] Using existing connection");
+        }
+        
+        System.out.println("🔵 [DATABASE STEP 4/4] Returning connection");
         return connection;
     }
     
