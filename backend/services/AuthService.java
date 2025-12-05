@@ -40,6 +40,18 @@ public class AuthService {
             long connTime = System.currentTimeMillis() - connStartTime;
             System.out.println("🟡 [SERVICE STEP 2/8] Database connection obtained in " + connTime + "ms");
             
+            // Validate connection before proceeding
+            if (conn == null || conn.isClosed()) {
+                System.err.println("🔴 [SERVICE ERROR] Database connection is null or closed");
+                return null;
+            }
+            
+            // Test connection with a quick timeout
+            if (!conn.isValid(5)) {
+                System.err.println("🔴 [SERVICE ERROR] Database connection is not valid");
+                return null;
+            }
+            
             System.out.println("🟡 [SERVICE STEP 3/8] Determining if email or phone...");
             boolean isEmail = emailOrPhone.contains("@");
             
@@ -54,14 +66,20 @@ public class AuthService {
             
             System.out.println("🟡 [SERVICE STEP 4/8] Preparing SQL statement...");
             PreparedStatement stmt = conn.prepareStatement(sql);
+            // Set query timeout to 10 seconds to prevent indefinite hanging
+            stmt.setQueryTimeout(10);
+            System.out.println("🟡 [SERVICE STEP 4/8] Query timeout set to 10 seconds");
             stmt.setString(1, emailOrPhone);
             System.out.println("🟡 [SERVICE STEP 4/8] SQL prepared: " + sql);
+            System.out.println("🟡 [SERVICE STEP 4/8] Parameter set: emailOrPhone = " + emailOrPhone);
             
-            System.out.println("🟡 [SERVICE STEP 5/8] Executing query...");
+            System.out.println("🟡 [SERVICE STEP 5/8] About to execute query...");
+            System.out.println("🟡 [SERVICE STEP 5/8] Connection status - isClosed: " + conn.isClosed() + ", isValid: " + conn.isValid(1));
             long queryStartTime = System.currentTimeMillis();
+            System.out.println("🟡 [SERVICE STEP 5/8] Calling stmt.executeQuery() at " + queryStartTime);
             ResultSet rs = stmt.executeQuery();
             long queryTime = System.currentTimeMillis() - queryStartTime;
-            System.out.println("🟡 [SERVICE STEP 5/8] Query executed in " + queryTime + "ms");
+            System.out.println("🟡 [SERVICE STEP 5/8] Query executed successfully in " + queryTime + "ms");
             
             System.out.println("🟡 [SERVICE STEP 6/8] Checking if user found...");
             if (rs.next()) {

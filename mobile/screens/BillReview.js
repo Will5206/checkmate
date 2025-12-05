@@ -58,6 +58,7 @@ export default function BillReview() {
   const [owedAmountExcludingPaid, setOwedAmountExcludingPaid] = useState(0); // Remaining amount owed after subtracting paid items
   const [userHasPaid, setUserHasPaid] = useState(false); // Boolean: true only after payment is fully processed
   const [isReceiptComplete, setIsReceiptComplete] = useState(false); // Track if receipt is complete (all items paid)
+  const [hasCheckedCompleteStatus, setHasCheckedCompleteStatus] = useState(false); // Track if we've checked complete status
   const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
   const [claimingItems, setClaimingItems] = useState(new Set()); // Track items being claimed to prevent double-clicks
   const scrollViewRef = useRef(null);
@@ -92,6 +93,15 @@ export default function BillReview() {
     } else {
       // Default to false - only set to true after successful payment
       setUserHasPaid(false);
+    }
+    
+    // Initialize isReceiptComplete from route params if provided (from ActivityScreen)
+    // This prevents the flicker by using the status already fetched
+    const routeIsReceiptComplete = route.params?.isReceiptComplete;
+    if (routeIsReceiptComplete !== undefined) {
+      setIsReceiptComplete(routeIsReceiptComplete);
+      setHasCheckedCompleteStatus(true); // Mark as checked so we don't make duplicate API call
+      console.log('BillReview: Set isReceiptComplete from route params:', routeIsReceiptComplete);
     }
     
     if (routeData) {
@@ -151,14 +161,19 @@ export default function BillReview() {
   // Load item assignments if viewing from Activity
   // This loads payment info from the database so we can show "Paid by [name]" for paid items
   useEffect(() => {
-    console.log('BillReview useEffect - isFromActivity:', isFromActivity, 'receiptId:', receiptId);
+    console.log('BillReview useEffect - isFromActivity:', isFromActivity, 'receiptId:', receiptId, 'hasCheckedCompleteStatus:', hasCheckedCompleteStatus);
     if (isFromActivity && receiptId) {
       console.log('Loading item assignments and payment info for receiptId:', receiptId);
       loadItemAssignments();
-      // Also check if receipt is complete
-      checkReceiptCompleteStatus();
+      // Only check complete status if we don't already have it from route params
+      // This prevents duplicate API call and eliminates flicker
+      if (!hasCheckedCompleteStatus) {
+        checkReceiptCompleteStatus();
+      } else {
+        console.log('BillReview: Skipping checkReceiptCompleteStatus - already have status from route params');
+      }
     }
-  }, [isFromActivity, receiptId]);
+  }, [isFromActivity, receiptId, hasCheckedCompleteStatus, loadItemAssignments, checkReceiptCompleteStatus]);
   
   // Function to check if receipt is complete
   const checkReceiptCompleteStatus = React.useCallback(async () => {
@@ -169,6 +184,7 @@ export default function BillReview() {
       if (response.success && response.receipt) {
         const isComplete = response.receipt.complete === true || response.receipt.complete === 1 || response.receipt.complete === '1';
         setIsReceiptComplete(isComplete);
+        setHasCheckedCompleteStatus(true); // Mark as checked
         console.log('Receipt complete status:', isComplete, 'for receiptId:', receiptId);
       }
     } catch (error) {
@@ -178,11 +194,13 @@ export default function BillReview() {
   
   // Also reload when screen comes into focus to get latest payment status and item claims
   // This ensures we see updates when someone else claims items
+  // Note: We always check complete status on focus in case receipt was completed while viewing
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
       if (isFromActivity && receiptId) {
         console.log('BillReview screen focused - reloading payment info and item assignments');
         loadItemAssignments();
+        // Always check complete status on focus (receipt might have been completed while viewing)
         checkReceiptCompleteStatus();
       }
     });

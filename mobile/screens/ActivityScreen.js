@@ -140,6 +140,7 @@ export default function ActivityScreen() {
         uploadedBy: fullReceipt.uploadedBy, // Pass uploadedBy to check if user is uploader
         isFromActivity: true, // Flag to indicate this is from activity (enables item claiming)
         userHasPaid: receipt.userHasPaid || false, // Pass payment status from list view
+        isReceiptComplete: fullReceipt.complete === true || fullReceipt.complete === 1 || fullReceipt.complete === '1', // Pass complete status to avoid duplicate API call
       });
     } catch (error) {
       console.error('[ActivityScreen] Error fetching receipt details:', error);

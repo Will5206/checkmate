@@ -29,7 +29,8 @@ const getLocalIP = () => {
 
   // Use your computer's IP for physical device testing
   // Change this to localhost if testing on web/simulator
-  return 'http://172.20.10.12:8080/api';
+  // Updated IP: 192.168.0.210 (check with: ifconfig | grep "inet " | grep -v "127.0.0.1")
+  return 'http://192.168.0.210:8080/api';
 };
 
 export const API_BASE_URL = getLocalIP();
