@@ -622,65 +622,69 @@ public class ReceiptController {
                     return;
                 }
                 
-                // Add items to receipt
+                // OPTIMIZATION: Batch insert items instead of one-by-one
                 UserDAO userDAO = new UserDAO();
                 List<String> validParticipantIds = new ArrayList<>();
                 
+                // Prepare items data for batch insert
+                List<Map<String, Object>> itemsData = new ArrayList<>();
                 for (int i = 0; i < itemsArray.length(); i++) {
                     JSONObject itemJson = itemsArray.getJSONObject(i);
-                    String itemName = itemJson.getString("name");
-                    double itemPrice = itemJson.getDouble("price");
-                    int quantity = itemJson.optInt("qty", itemJson.optInt("quantity", 1));
-                    String category = itemJson.optString("category", null);
-                    
-                    ReceiptItem item = receiptDAO.addReceiptItem(
-                        receipt.getReceiptId(),
-                        itemName,
-                        (float) itemPrice,
-                        quantity,
-                        category
-                    );
-                    
-                    if (item != null) {
-                        receipt.addItem(item);
-                    }
+                    Map<String, Object> itemData = new HashMap<>();
+                    itemData.put("name", itemJson.getString("name"));
+                    itemData.put("price", itemJson.getDouble("price"));
+                    itemData.put("quantity", itemJson.optInt("qty", itemJson.optInt("quantity", 1)));
+                    itemData.put("category", itemJson.optString("category", null));
+                    itemsData.add(itemData);
+                }
+                
+                // Batch insert all items in one database operation
+                List<ReceiptItem> createdItems = receiptDAO.addReceiptItemsBatch(receipt.getReceiptId(), itemsData);
+                for (ReceiptItem item : createdItems) {
+                    receipt.addItem(item);
                 }
                 
                 // Add uploader as participant with 'pending' status (so they see it in Pending screen like everyone else)
                 receiptDAO.addReceiptParticipant(receipt.getReceiptId(), userIdStr);
-
                 validParticipantIds.add(userIdStr);
                 
-                // Convert participant emails to user IDs and add them
+                // OPTIMIZATION: Batch lookup all participant emails in one query
+                List<String> participantEmails = new ArrayList<>();
                 for (int i = 0; i < participantsArray.length(); i++) {
                     String email = participantsArray.getString(i).trim().toLowerCase();
-                    
-                    // Find user by email
-                    User participantUser = userDAO.findUserByEmail(email);
-                    
+                    participantEmails.add(email);
+                }
+                
+                // Batch lookup all users by email
+                Map<String, User> emailToUserMap = userDAO.findUsersByEmailsBatch(participantEmails);
+                
+                // Collect valid participant user IDs (excluding uploader)
+                List<String> participantUserIds = new ArrayList<>();
+                for (String email : participantEmails) {
+                    User participantUser = emailToUserMap.get(email);
                     if (participantUser != null) {
                         String participantUserId = participantUser.getUserId();
-                        
                         // Skip if it's the uploader (already added)
                         if (!participantUserId.equals(userIdStr)) {
-                            // Add participant to receipt
-                            boolean added = receiptDAO.addReceiptParticipant(receipt.getReceiptId(), participantUserId);
-                            
-                            if (added) {
-                                validParticipantIds.add(participantUserId);
-                            }
+                            participantUserIds.add(participantUserId);
+                            validParticipantIds.add(participantUserId);
                         }
                     }
+                }
+                
+                // OPTIMIZATION: Batch insert all participants in one database operation
+                if (!participantUserIds.isEmpty()) {
+                    receiptDAO.addReceiptParticipantsBatch(receipt.getReceiptId(), participantUserIds);
                 }
                 
                 // Update number_of_items in receipts table after all items are added
                 receiptDAO.updateReceiptItemCount(receipt.getReceiptId());
                 
-                // Reload receipt with items
-                receipt = receiptDAO.getReceiptById(receipt.getReceiptId());
+                // OPTIMIZATION: Skip reload - build response from existing data
+                // Items are already added to receipt object, no need to reload from database
                 
-                // Build response
-                JSONObject receiptJson = buildReceiptJson(receipt);
+                // Build response - pass uploadedBy to avoid extra query
+                JSONObject receiptJson = buildReceiptJson(receipt, userIdStr);
                 receiptJson.put("status", "accepted");
                 
                 JSONObject resp = new JSONObject()

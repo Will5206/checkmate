@@ -144,9 +144,32 @@ public class ReceiptDAO {
      * @return Total quantity claimed, or 0 if none
      */
     public int getTotalClaimedQuantity(int itemId) {
-        String sql = "SELECT COALESCE(SUM(quantity), 0) as total_claimed " +
-                     "FROM item_assignments " +
-                     "WHERE item_id = ? AND paid_by IS NULL"; // Only count unpaid claims
+        // FIXED: Check if paid_by column exists before using it
+        // If column doesn't exist, count all assignments (backward compatibility)
+        String sql;
+        boolean hasPaidByColumn = false;
+        
+        try (Connection conn = dbConnection.getConnection()) {
+            java.sql.DatabaseMetaData metaData = conn.getMetaData();
+            try (java.sql.ResultSet columns = metaData.getColumns(null, null, "item_assignments", "paid_by")) {
+                hasPaidByColumn = columns.next();
+            }
+        } catch (SQLException e) {
+            System.err.println("Error checking for paid_by column: " + e.getMessage());
+            // Default to not filtering by paid_by if we can't check
+        }
+        
+        if (hasPaidByColumn) {
+            // Column exists - only count unpaid claims
+            sql = "SELECT COALESCE(SUM(quantity), 0) as total_claimed " +
+                  "FROM item_assignments " +
+                  "WHERE item_id = ? AND paid_by IS NULL";
+        } else {
+            // Column doesn't exist - count all claims (backward compatibility)
+            sql = "SELECT COALESCE(SUM(quantity), 0) as total_claimed " +
+                  "FROM item_assignments " +
+                  "WHERE item_id = ?";
+        }
         
         try (Connection conn = dbConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -528,13 +551,12 @@ public class ReceiptDAO {
      * @return Number of items marked as paid
      */
     public int markItemsAsPaid(int receiptId, String userId) {
-        // Mark items in receipt_items table where the user has claimed them
-        // Only mark items that aren't already paid
-        // CRITICAL FIX: Set both paid_by AND paid_for when item is paid
-        String sql = "UPDATE receipt_items ri " +
-                     "INNER JOIN item_assignments ia ON ri.item_id = ia.item_id " +
-                     "SET ri.paid_by = ?, ri.paid_at = CURRENT_TIMESTAMP, ri.paid_for = 1 " +
-                     "WHERE ri.receipt_id = ? AND ia.user_id = ? AND ri.paid_by IS NULL";
+        // FIXED: Update item_assignments table (not receipt_items) where the user has claimed them
+        // Only mark assignments that aren't already paid
+        // Payment is tracked at the ASSIGNMENT level, not the ITEM level
+        String sql = "UPDATE item_assignments " +
+                     "SET paid_by = ?, paid_at = CURRENT_TIMESTAMP " +
+                     "WHERE receipt_id = ? AND user_id = ? AND paid_by IS NULL";
         
         try (Connection conn = dbConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -543,25 +565,29 @@ public class ReceiptDAO {
             pstmt.setString(3, userId);
             
             int affectedRows = pstmt.executeUpdate();
-            System.out.println("Marked " + affectedRows + " items as paid in receipt_items for user " + userId);
+            System.out.println("Marked " + affectedRows + " item assignments as paid for user " + userId);
             return affectedRows;
         } catch (SQLException e) {
-            System.err.println("Error marking items as paid in receipt_items: " + e.getMessage());
+            System.err.println("Error marking item assignments as paid: " + e.getMessage());
             e.printStackTrace();
             return 0;
         }
     }
     
     /**
-     * Get payment info for all items in a receipt (from receipt_items table).
+     * Get payment info for all items in a receipt (from item_assignments table).
+     * FIXED: Now queries item_assignments instead of receipt_items (which doesn't have payment columns).
      * 
      * @param receiptId The receipt ID
-     * @return Map of itemId -> {paidBy, payerName, paidAt}
+     * @return Map of itemId -> {paidBy, paidAt} for items that have been paid
      */
     public Map<Integer, Map<String, Object>> getItemPaymentInfoForReceipt(int receiptId) {
+        // FIXED: Query item_assignments instead of receipt_items
+        // Group by item_id and get the first paid assignment (in case multiple users paid)
         String sql = "SELECT item_id, paid_by, paid_at " +
-                     "FROM receipt_items " +
-                     "WHERE receipt_id = ? AND paid_by IS NOT NULL";
+                     "FROM item_assignments " +
+                     "WHERE receipt_id = ? AND paid_by IS NOT NULL " +
+                     "GROUP BY item_id, paid_by, paid_at";
         
         Map<Integer, Map<String, Object>> paymentInfo = new HashMap<>();
         
@@ -572,17 +598,20 @@ public class ReceiptDAO {
             try (ResultSet rs = pstmt.executeQuery()) {
                 while (rs.next()) {
                     int itemId = rs.getInt("item_id");
-                    String paidBy = rs.getString("paid_by");
-                    Timestamp paidAt = rs.getTimestamp("paid_at");
-                    
-                    Map<String, Object> info = new HashMap<>();
-                    info.put("paidBy", paidBy);
-                    info.put("paidAt", paidAt != null ? paidAt.getTime() : null);
-                    paymentInfo.put(itemId, info);
+                    // If item already has payment info, keep the first one (or could merge)
+                    if (!paymentInfo.containsKey(itemId)) {
+                        String paidBy = rs.getString("paid_by");
+                        Timestamp paidAt = rs.getTimestamp("paid_at");
+                        
+                        Map<String, Object> info = new HashMap<>();
+                        info.put("paidBy", paidBy);
+                        info.put("paidAt", paidAt != null ? paidAt.getTime() : null);
+                        paymentInfo.put(itemId, info);
+                    }
                 }
             }
         } catch (SQLException e) {
-            System.err.println("Error getting item payment info from receipt_items: " + e.getMessage());
+            System.err.println("Error getting item payment info from item_assignments: " + e.getMessage());
             e.printStackTrace();
         }
         
@@ -729,7 +758,7 @@ public class ReceiptDAO {
     /**
      * Calculate the total amount owed by a user for a receipt, EXCLUDING items that have been paid for.
      * This is used for the "Amount Owed" section to show remaining balance after payments.
-     * Items with paid_for = 1 or paid_by IS NOT NULL are excluded from the calculation.
+     * Items with paid_by IS NOT NULL in item_assignments are excluded from the calculation.
      * 
      * @param receiptId The receipt ID
      * @param userId The user ID (VARCHAR(36))
@@ -748,6 +777,7 @@ public class ReceiptDAO {
         }
         
         // Now calculate the value of paid items assigned to this user
+        // FIXED: Check item_assignments.paid_by instead of receipt_items columns
         String sql = "SELECT " +
                      "  COALESCE(SUM(ri.price * ia.quantity), 0) as paid_items_subtotal, " +
                      "  COALESCE(SUM(ri.price * ri.quantity), 0) as total_subtotal, " +
@@ -757,7 +787,7 @@ public class ReceiptDAO {
                      "INNER JOIN item_assignments ia ON ri.item_id = ia.item_id AND ia.user_id = ? " +
                      "INNER JOIN receipts r ON ri.receipt_id = r.receipt_id " +
                      "WHERE ri.receipt_id = ? " +
-                     "  AND (ri.paid_for = 1 OR ri.paid_by IS NOT NULL)";
+                     "  AND ia.paid_by IS NOT NULL";
         
         try (Connection conn = dbConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -1010,6 +1040,81 @@ public class ReceiptDAO {
     }
     
     /**
+     * OPTIMIZED: Batch insert multiple receipt items in a single database operation.
+     * This is much faster than inserting items one by one.
+     * 
+     * @param receiptId The receipt ID
+     * @param items List of item data: {name, price, quantity, category}
+     * @return List of created ReceiptItem objects with their generated IDs
+     */
+    public List<ReceiptItem> addReceiptItemsBatch(int receiptId, List<Map<String, Object>> items) {
+        if (items == null || items.isEmpty()) {
+            return new ArrayList<>();
+        }
+        
+        String sql = "INSERT INTO receipt_items (receipt_id, name, price, quantity, category) " +
+                     "VALUES (?, ?, ?, ?, ?)";
+        
+        List<ReceiptItem> createdItems = new ArrayList<>();
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            
+            // Add all items to batch
+            for (Map<String, Object> item : items) {
+                String name = (String) item.get("name");
+                double price = ((Number) item.get("price")).doubleValue();
+                int quantity = ((Number) item.getOrDefault("quantity", 1)).intValue();
+                String category = (String) item.getOrDefault("category", null);
+                
+                pstmt.setInt(1, receiptId);
+                pstmt.setString(2, name);
+                pstmt.setBigDecimal(3, java.math.BigDecimal.valueOf(price));
+                pstmt.setInt(4, quantity);
+                pstmt.setString(5, category);
+                
+                pstmt.addBatch();
+            }
+            
+            // Execute batch insert
+            int[] affectedRows = pstmt.executeBatch();
+            
+            // Get generated keys for all inserted items
+            try (ResultSet generatedKeys = pstmt.getGeneratedKeys()) {
+                int index = 0;
+                for (Map<String, Object> item : items) {
+                    if (generatedKeys.next() && affectedRows[index] > 0) {
+                        int itemId = generatedKeys.getInt(1);
+                        String name = (String) item.get("name");
+                        double price = ((Number) item.get("price")).doubleValue();
+                        int quantity = ((Number) item.getOrDefault("quantity", 1)).intValue();
+                        String category = (String) item.getOrDefault("category", null);
+                        
+                        ReceiptItem receiptItem = new ReceiptItem(
+                            itemId,
+                            receiptId,
+                            name,
+                            (float) price,
+                            quantity,
+                            category
+                        );
+                        createdItems.add(receiptItem);
+                    }
+                    index++;
+                }
+            }
+            
+            System.out.println("[ReceiptDAO] Batch inserted " + createdItems.size() + " items for receipt " + receiptId);
+            
+        } catch (SQLException e) {
+            System.err.println("Error batch adding receipt items: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return createdItems;
+    }
+    
+    /**
      * Update the number_of_items count for a receipt.
      * 
      * @param receiptId The receipt ID
@@ -1109,6 +1214,55 @@ public class ReceiptDAO {
         }
 
         return false;
+    }
+    
+    /**
+     * OPTIMIZED: Batch insert multiple receipt participants in a single database operation.
+     * This is much faster than adding participants one by one.
+     * 
+     * @param receiptId The receipt ID
+     * @param userIds List of user IDs to add as participants
+     * @return Number of participants successfully added
+     */
+    public int addReceiptParticipantsBatch(int receiptId, List<String> userIds) {
+        if (userIds == null || userIds.isEmpty()) {
+            return 0;
+        }
+        
+        String sql = "INSERT INTO receipt_participants (receipt_id, user_id, status) " +
+                     "VALUES (?, ?, 'pending') " +
+                     "ON DUPLICATE KEY UPDATE status = 'pending'";
+        
+        int addedCount = 0;
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            // Add all participants to batch
+            for (String userId : userIds) {
+                pstmt.setInt(1, receiptId);
+                pstmt.setString(2, userId);
+                pstmt.addBatch();
+            }
+            
+            // Execute batch insert
+            int[] affectedRows = pstmt.executeBatch();
+            
+            // Count successful inserts
+            for (int rows : affectedRows) {
+                if (rows > 0) {
+                    addedCount++;
+                }
+            }
+            
+            System.out.println("[ReceiptDAO] Batch added " + addedCount + " participants for receipt " + receiptId);
+            
+        } catch (SQLException e) {
+            System.err.println("Error batch adding receipt participants: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return addedCount;
     }
 
     /**
@@ -1369,13 +1523,12 @@ public class ReceiptDAO {
                 }
             }
             
-            // Step 2: Mark items as paid in receipt_items
-            // CRITICAL FIX: Set both paid_by AND paid_for when item is paid
-            // paid_for = 1 means the item has been paid for
-            String itemsSql = "UPDATE receipt_items ri " +
-                            "INNER JOIN item_assignments ia ON ri.item_id = ia.item_id " +
-                            "SET ri.paid_by = ?, ri.paid_at = CURRENT_TIMESTAMP, ri.paid_for = 1 " +
-                            "WHERE ri.receipt_id = ? AND ia.user_id = ? AND ri.paid_by IS NULL";
+            // Step 2: Mark item assignments as paid in item_assignments
+            // FIXED: Update item_assignments (not receipt_items) where the user has claimed items
+            // Payment is tracked at the ASSIGNMENT level, not the ITEM level
+            String itemsSql = "UPDATE item_assignments " +
+                            "SET paid_by = ?, paid_at = CURRENT_TIMESTAMP " +
+                            "WHERE receipt_id = ? AND user_id = ? AND paid_by IS NULL";
             
             int itemsMarked = 0;
             try (PreparedStatement pstmt = conn.prepareStatement(itemsSql)) {
@@ -1487,7 +1640,7 @@ public class ReceiptDAO {
 
     /**
      * CRITICAL FIX: Update the complete status of a receipt based on ALL items being paid for.
-     * A receipt is complete when ALL items have paid_for = 1 (or paid_by IS NOT NULL).
+     * A receipt is complete when ALL item assignments have paid_by IS NOT NULL.
      * 
      * @param receiptId The receipt ID
      * @return true if receipt is now complete (all items paid for), false otherwise
@@ -1495,7 +1648,7 @@ public class ReceiptDAO {
     public boolean updateReceiptCompleteStatus(int receiptId) {
         System.out.println("[ReceiptDAO] updateReceiptCompleteStatus called for receipt " + receiptId);
         
-        // Check if all items are paid for (paid_for = 1 or paid_by IS NOT NULL)
+        // Check if all item assignments are paid (paid_by IS NOT NULL in item_assignments)
         boolean allItemsPaid = areAllItemsPaidFor(receiptId);
         System.out.println("[ReceiptDAO] areAllItemsPaidFor returned: " + allItemsPaid + " for receipt " + receiptId);
         
@@ -1507,17 +1660,22 @@ public class ReceiptDAO {
     
     /**
      * Check if all items in a receipt are paid for.
-     * An item is paid for if paid_for = 1 OR paid_by IS NOT NULL.
+     * An item is paid for when all its assignments in item_assignments have paid_by IS NOT NULL.
      * 
      * @param receiptId The receipt ID
      * @return true if all items are paid for, false otherwise
      */
     private boolean areAllItemsPaidFor(int receiptId) {
+        // FIXED: Check item_assignments instead of receipt_items
+        // A receipt is complete when ALL item assignments are paid
+        // This means every quantity of every item has been paid for
         String sql = "SELECT " +
-                     "  COUNT(*) as total_items, " +
-                     "  SUM(CASE WHEN paid_for = 1 OR paid_by IS NOT NULL THEN 1 ELSE 0 END) as paid_items " +
-                     "FROM receipt_items " +
-                     "WHERE receipt_id = ?";
+                     "  COUNT(DISTINCT ri.item_id) as total_items, " +
+                     "  COUNT(DISTINCT CASE WHEN ia.paid_by IS NOT NULL THEN ri.item_id END) as paid_items " +
+                     "FROM receipt_items ri " +
+                     "LEFT JOIN item_assignments ia ON ri.item_id = ia.item_id " +
+                     "WHERE ri.receipt_id = ? " +
+                     "GROUP BY ri.receipt_id";
         
         try (Connection conn = dbConnection.getConnection();
              PreparedStatement pstmt = conn.prepareStatement(sql)) {
@@ -1528,21 +1686,54 @@ public class ReceiptDAO {
                     int totalItems = rs.getInt("total_items");
                     int paidItems = rs.getInt("paid_items");
                     
-                    System.out.println("[ReceiptDAO] Receipt " + receiptId + ": " + paidItems + "/" + totalItems + " items are paid for");
+                    System.out.println("[ReceiptDAO] Receipt " + receiptId + ": " + paidItems + "/" + totalItems + " items have paid assignments");
                     
                     if (totalItems == 0) {
                         System.out.println("[ReceiptDAO] Receipt " + receiptId + " has no items - not complete");
                         return false;
                     }
                     
-                    boolean allPaid = (paidItems == totalItems);
-                    if (allPaid) {
-                        System.out.println("[ReceiptDAO] Receipt " + receiptId + ": ALL " + totalItems + " items are paid for - can move to History");
-                    } else {
-                        System.out.println("[ReceiptDAO] Receipt " + receiptId + ": " + (totalItems - paidItems) + " items still need to be paid for");
-                    }
+                    // Check if all items have at least one paid assignment
+                    // AND all assignments for each item are paid
+                    boolean allItemsHavePaidAssignments = (paidItems == totalItems);
                     
-                    return allPaid;
+                    // Also check that ALL assignments are paid (not just some)
+                    String checkAllAssignmentsSql = "SELECT " +
+                                                   "  COUNT(*) as total_assignments, " +
+                                                   "  SUM(CASE WHEN paid_by IS NOT NULL THEN 1 ELSE 0 END) as paid_assignments " +
+                                                   "FROM item_assignments " +
+                                                   "WHERE receipt_id = ?";
+                    
+                    try (PreparedStatement pstmt2 = conn.prepareStatement(checkAllAssignmentsSql)) {
+                        pstmt2.setInt(1, receiptId);
+                        try (ResultSet rs2 = pstmt2.executeQuery()) {
+                            if (rs2.next()) {
+                                int totalAssignments = rs2.getInt("total_assignments");
+                                int paidAssignments = rs2.getInt("paid_assignments");
+                                
+                                if (totalAssignments == 0) {
+                                    // No assignments yet - receipt not complete
+                                    System.out.println("[ReceiptDAO] Receipt " + receiptId + " has no item assignments - not complete");
+                                    return false;
+                                }
+                                
+                                boolean allAssignmentsPaid = (paidAssignments == totalAssignments);
+                                boolean allPaid = allItemsHavePaidAssignments && allAssignmentsPaid;
+                                
+                                if (allPaid) {
+                                    System.out.println("[ReceiptDAO] Receipt " + receiptId + ": ALL " + totalItems + " items and ALL " + totalAssignments + " assignments are paid - can move to History");
+                                } else {
+                                    System.out.println("[ReceiptDAO] Receipt " + receiptId + ": " + (totalAssignments - paidAssignments) + " assignments still need to be paid for");
+                                }
+                                
+                                return allPaid;
+                            }
+                        }
+                    }
+                } else {
+                    // No items found
+                    System.out.println("[ReceiptDAO] Receipt " + receiptId + " has no items - not complete");
+                    return false;
                 }
             }
         } catch (SQLException e) {
@@ -1736,7 +1927,7 @@ public class ReceiptDAO {
      * @return true if receipt was marked as completed, false otherwise
      */
     public boolean checkAndMarkReceiptCompleted(int receiptId) {
-        // CRITICAL FIX: Check if all items are paid for (paid_for = 1 or paid_by IS NOT NULL)
+        // CRITICAL FIX: Check if all item assignments are paid (paid_by IS NOT NULL in item_assignments)
         // A receipt is complete when ALL items are paid for, regardless of participants
         boolean allItemsPaid = areAllItemsPaidFor(receiptId);
         
@@ -1751,7 +1942,7 @@ public class ReceiptDAO {
             if (receiptUpdated) {
                 // Mark all participants as 'completed' so receipt moves to History for everyone
                 updateAllParticipantsStatus(receiptId, "completed");
-                System.out.println("Receipt " + receiptId + " is now fully paid and completed (all items paid_for=1, status='completed', complete=1)");
+                System.out.println("Receipt " + receiptId + " is now fully paid and completed (all item assignments paid, status='completed', complete=1)");
             }
             
             return receiptUpdated;
