@@ -9,8 +9,10 @@ import sys
 import os
 import json
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+# Add project root and scripts directory to path
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, project_root)
+sys.path.insert(0, os.path.join(project_root, 'scripts'))
 
 # Note: These tests mock the OpenAI API calls since we don't want to make real API calls in tests
 

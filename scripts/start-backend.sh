@@ -17,9 +17,9 @@ else
     echo "⚠ No .env file found, using localhost defaults"
 fi
 
-# Start the backend server with environment variables passed as system properties
+# Compile and start the backend server with environment variables passed as system properties
 echo "Starting CheckMate backend server..."
-mvn exec:java -Dexec.mainClass="Server" \
+mvn compile exec:java -Dexec.mainClass="Server" \
     -Dexec.systemProperties \
     -DDB_URL="$DB_URL" \
     -DDB_USER="$DB_USER" \

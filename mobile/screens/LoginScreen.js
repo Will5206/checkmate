@@ -28,27 +28,37 @@ export default function LoginScreen({ navigation }) {
   const [error, setError] = useState(null);
 
   const handleLogin = async () => {
+    console.log('🔵 [LOGIN SCREEN] handleLogin() called');
+    console.log('🔵 [LOGIN SCREEN] emailOrPhone:', emailOrPhone ? emailOrPhone.substring(0, 3) + '***' : 'empty');
+    console.log('🔵 [LOGIN SCREEN] password length:', password ? password.length : 0);
+    
     setError(null); // Clear previous errors
 
     if (!emailOrPhone || !password) {
+      console.log('🔵 [LOGIN SCREEN] Validation failed: missing fields');
       setError('Please fill in all fields');
       return;
     }
 
+    console.log('🔵 [LOGIN SCREEN] Starting login process...');
     setLoading(true);
     try {
       const result = await loginUser(emailOrPhone, password);
 
       if (result.success) {
+        console.log('🔵 [LOGIN SCREEN] Login successful, navigating to Home');
         setError(null);
         navigation.replace('Home');
       } else {
+        console.log('🔵 [LOGIN SCREEN] Login failed:', result.message);
         // Show error with red styling
         setError('❌ Email or password is incorrect');
       }
     } catch (error) {
+      console.error('🔴 [LOGIN SCREEN ERROR] Exception:', error.name, error.message);
       setError('❌ Network error - Please try again');
     } finally {
+      console.log('🔵 [LOGIN SCREEN] Login process completed');
       setLoading(false);
     }
   };

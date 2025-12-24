@@ -24,12 +24,56 @@ import java.io.IOException;
 public class DatabaseConnection {
 
     // db config stuff - checks system properties first (from Maven -D flags), then environment variables, then defaults
-    private static final String DB_URL = System.getProperty("DB_URL",
-        System.getenv("DB_URL") != null ? System.getenv("DB_URL") : "jdbc:mysql://localhost:3306/checkmate_db");
-    private static final String DB_USER = System.getProperty("DB_USER",
-        System.getenv("DB_USER") != null ? System.getenv("DB_USER") : "root");
-    private static final String DB_PASSWORD = System.getProperty("DB_PASSWORD",
-        System.getenv("DB_PASSWORD") != null ? System.getenv("DB_PASSWORD") : "password");
+    // In production, environment variables should be set (Railway, Heroku, etc.)
+    private static final String DB_URL = getDatabaseUrl();
+    private static final String DB_USER = getDatabaseUser();
+    private static final String DB_PASSWORD = getDatabasePassword();
+    
+    private static String getDatabaseUrl() {
+        String url = System.getProperty("DB_URL");
+        if (url == null || url.isEmpty()) {
+            url = System.getenv("DB_URL");
+        }
+        // Only fall back to localhost in development
+        if (url == null || url.isEmpty()) {
+            String env = System.getenv("ENVIRONMENT");
+            if ("production".equals(env) || "PRODUCTION".equals(env)) {
+                throw new RuntimeException("DB_URL environment variable is required in production");
+            }
+            return "jdbc:mysql://localhost:3306/checkmate_db";
+        }
+        return url;
+    }
+    
+    private static String getDatabaseUser() {
+        String user = System.getProperty("DB_USER");
+        if (user == null || user.isEmpty()) {
+            user = System.getenv("DB_USER");
+        }
+        if (user == null || user.isEmpty()) {
+            String env = System.getenv("ENVIRONMENT");
+            if ("production".equals(env) || "PRODUCTION".equals(env)) {
+                throw new RuntimeException("DB_USER environment variable is required in production");
+            }
+            return "root";
+        }
+        return user;
+    }
+    
+    private static String getDatabasePassword() {
+        String password = System.getProperty("DB_PASSWORD");
+        if (password == null || password.isEmpty()) {
+            password = System.getenv("DB_PASSWORD");
+        }
+        if (password == null || password.isEmpty()) {
+            String env = System.getenv("ENVIRONMENT");
+            if ("production".equals(env) || "PRODUCTION".equals(env)) {
+                throw new RuntimeException("DB_PASSWORD environment variable is required in production");
+            }
+            return "password";
+        }
+        return password;
+    }
 
     //singleton instance
     private static DatabaseConnection instance;
@@ -43,6 +87,23 @@ public class DatabaseConnection {
         System.out.println("🔵 [DATABASE INIT] DB_URL: " + DB_URL.replace(DB_PASSWORD, "***"));
         System.out.println("🔵 [DATABASE INIT] DB_USER: " + DB_USER);
         
+        // Extract and display connection details
+        try {
+            String maskedUrl = DB_URL.replace(DB_PASSWORD, "***");
+            if (maskedUrl.contains("jdbc:mysql://")) {
+                String urlPart = maskedUrl.substring("jdbc:mysql://".length());
+                int slashIndex = urlPart.indexOf('/');
+                if (slashIndex > 0) {
+                    String hostPort = urlPart.substring(0, slashIndex);
+                    String database = urlPart.substring(slashIndex + 1);
+                    System.out.println("🔵 [DATABASE INIT] Host:Port: " + hostPort);
+                    System.out.println("🔵 [DATABASE INIT] Database: " + database);
+                }
+            }
+        } catch (Exception e) {
+            // Ignore parsing errors
+        }
+        
         try {
             System.out.println("🔵 [DATABASE INIT] Loading MySQL JDBC driver...");
             Class.forName("com.mysql.cj.jdbc.Driver");
@@ -53,7 +114,24 @@ public class DatabaseConnection {
             this.connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
             long connTime = System.currentTimeMillis() - connStartTime;
             System.out.println("🔵 [DATABASE INIT] Database connection established in " + connTime + "ms");
-            System.out.println("Database connection established successfully");
+            
+            // Verify connection and get metadata
+            if (this.connection != null && !this.connection.isClosed()) {
+                try {
+                    String catalog = this.connection.getCatalog();
+                    String url = this.connection.getMetaData().getURL();
+                    String dbProduct = this.connection.getMetaData().getDatabaseProductName();
+                    String dbVersion = this.connection.getMetaData().getDatabaseProductVersion();
+                    System.out.println("🔵 [DATABASE INIT] Connection verified:");
+                    System.out.println("🔵 [DATABASE INIT]   - Catalog (Database): " + catalog);
+                    System.out.println("🔵 [DATABASE INIT]   - Product: " + dbProduct);
+                    System.out.println("🔵 [DATABASE INIT]   - Version: " + dbVersion);
+                    System.out.println("🔵 [DATABASE INIT]   - Connection URL: " + url.replace(DB_PASSWORD, "***"));
+                } catch (SQLException e) {
+                    System.out.println("🔵 [DATABASE INIT] Connection established but metadata unavailable");
+                }
+            }
+            System.out.println("🔵 [DATABASE INIT] Database connection established successfully");
             
         } catch (ClassNotFoundException e) {
             System.err.println("🔴 [DATABASE INIT ERROR] MySQL JDBC Driver not found");
@@ -133,7 +211,17 @@ public class DatabaseConnection {
                 connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
                 long connTime = System.currentTimeMillis() - connStartTime;
                 System.out.println("🔵 [DATABASE STEP 3/4] Connection established in " + connTime + "ms");
-                System.out.println("Database connection established/reconnected");
+                
+                // Verify reconnected connection
+                if (connection != null && !connection.isClosed()) {
+                    try {
+                        String catalog = connection.getCatalog();
+                        System.out.println("🔵 [DATABASE STEP 3/4] Reconnected to database: " + catalog);
+                    } catch (SQLException e) {
+                        // Ignore metadata errors
+                    }
+                }
+                System.out.println("🔵 [DATABASE STEP 3/4] Database connection established/reconnected");
             } catch (SQLException e) {
                 System.err.println("🔴 [DATABASE STEP 3/4 ERROR] Failed to create connection:");
                 System.err.println("🔴 [DATABASE STEP 3/4 ERROR] Message: " + e.getMessage());
@@ -143,6 +231,14 @@ public class DatabaseConnection {
             }
         } else {
             System.out.println("🔵 [DATABASE STEP 3/4] Using existing connection");
+            try {
+                if (connection != null) {
+                    String catalog = connection.getCatalog();
+                    System.out.println("🔵 [DATABASE STEP 3/4] Current database: " + catalog);
+                }
+            } catch (SQLException e) {
+                // Ignore metadata errors
+            }
         }
         
         System.out.println("🔵 [DATABASE STEP 4/4] Returning connection");

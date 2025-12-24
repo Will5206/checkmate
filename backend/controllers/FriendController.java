@@ -6,6 +6,8 @@ import com.sun.net.httpserver.HttpHandler;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import utils.ValidationUtils;
+import utils.AuthMiddleware;
+import utils.ErrorResponse;
 import database.UserDAO;
 import models.User;
 import models.Friend;
@@ -31,16 +33,30 @@ public class FriendController {
                 return;
             }
             if (!"POST".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
                 return;
             }
+            
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
+                return;
+            }
+            
             Map<String, String> query = parseQuery(exchange.getRequestURI());
             try {
                 String userId = query.getOrDefault("userId", "");
                 String friendId = query.getOrDefault("friendId", "");
 
                 if (userId.isEmpty() || friendId.isEmpty()) {
-                    sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "userId and friendId are required"));
+                    ErrorResponse.sendError(exchange, 400, "userId and friendId are required");
+                    return;
+                }
+                
+                // Verify user can only add friends for themselves
+                if (!userId.equals(authenticatedUserId)) {
+                    ErrorResponse.sendError(exchange, 403, "Forbidden: Cannot add friends for another user");
                     return;
                 }
 
@@ -52,7 +68,7 @@ public class FriendController {
                         .put("friendId", friendId);
                 sendJson(exchange, 200, resp);
             } catch (Exception e) {
-                sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "Invalid parameters: " + e.getMessage()));
+                ErrorResponse.sendError(exchange, 400, "Invalid parameters: " + e.getMessage());
             }
         }
     }
@@ -66,9 +82,17 @@ public class FriendController {
                 return;
             }
             if (!"POST".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
                 return;
             }
+            
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
+                return;
+            }
+            
             Map<String, String> query = parseQuery(exchange.getRequestURI());
             try {
                 String userId = query.getOrDefault("userId", "");
@@ -77,7 +101,13 @@ public class FriendController {
                 System.out.println("🔴 [4/8] RemoveFriendHandler: userId=" + userId + ", friendId=" + friendId);
 
                 if (userId.isEmpty() || friendId.isEmpty()) {
-                    sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "userId and friendId are required"));
+                    ErrorResponse.sendError(exchange, 400, "userId and friendId are required");
+                    return;
+                }
+                
+                // Verify user can only remove their own friends
+                if (!userId.equals(authenticatedUserId)) {
+                    ErrorResponse.sendError(exchange, 403, "Forbidden: Cannot remove friends for another user");
                     return;
                 }
 
@@ -90,7 +120,7 @@ public class FriendController {
                         .put("friendId", friendId);
                 sendJson(exchange, 200, resp);
             } catch (Exception e) {
-                sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "Invalid parameters: " + e.getMessage()));
+                ErrorResponse.sendError(exchange, 400, "Invalid parameters: " + e.getMessage());
             }
         }
     }
@@ -114,6 +144,13 @@ public class FriendController {
                 return;
             }
 
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
+                return;
+            }
+
             Map<String, String> query = parseQuery(exchange.getRequestURI());
 
             try {
@@ -127,6 +164,14 @@ public class FriendController {
                         .put("message", "userId is required"));
                     return;
                 }
+                
+                // Verify user can only add friends for themselves
+                if (!userId.equals(authenticatedUserId)) {
+                    sendJson(exchange, 403, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Forbidden: Cannot add friends for another user"));
+                    return;
+                }
 
                 if (friendEmail.isEmpty()) {
                     sendJson(exchange, 400, new JSONObject()
@@ -135,7 +180,8 @@ public class FriendController {
                     return;
                 }
 
-                // Validate email format
+                // Validate and sanitize email format
+                friendEmail = friendEmail.trim().toLowerCase();
                 if (!ValidationUtils.isValidEmail(friendEmail)) {
                     sendJson(exchange, 400, new JSONObject()
                         .put("success", false)
@@ -249,15 +295,29 @@ public class FriendController {
                 return;
             }
             if (!"GET".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
                 return;
             }
+            
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
+                return;
+            }
+            
             Map<String, String> query = parseQuery(exchange.getRequestURI());
             try {
                 String userId = query.getOrDefault("userId", "");
 
                 if (userId.isEmpty()) {
-                    sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "userId is required"));
+                    ErrorResponse.sendError(exchange, 400, "userId is required");
+                    return;
+                }
+                
+                // Verify user can only list their own friends
+                if (!userId.equals(authenticatedUserId)) {
+                    ErrorResponse.sendError(exchange, 403, "Forbidden: Cannot list friends for another user");
                     return;
                 }
 
@@ -286,7 +346,7 @@ public class FriendController {
                         .put("friends", friendsArray);
                 sendJson(exchange, 200, resp);
             } catch (Exception e) {
-                sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "Invalid parameters: " + e.getMessage()));
+                ErrorResponse.sendError(exchange, 400, "Invalid parameters: " + e.getMessage());
             }
         }
     }
@@ -304,7 +364,7 @@ public class FriendController {
                 return;
             }
             if (!"POST".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
                 return;
             }
             
@@ -368,7 +428,14 @@ public class FriendController {
                 return;
             }
             if (!"POST".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
+                return;
+            }
+            
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
                 return;
             }
             
@@ -381,6 +448,14 @@ public class FriendController {
                     sendJson(exchange, 400, new JSONObject()
                         .put("success", false)
                         .put("message", "userId and friendId are required"));
+                    return;
+                }
+                
+                // Verify user can only decline requests for themselves
+                if (!userId.equals(authenticatedUserId)) {
+                    sendJson(exchange, 403, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Forbidden: Cannot decline friend requests for another user"));
                     return;
                 }
 
@@ -432,7 +507,14 @@ public class FriendController {
                 return;
             }
             if (!"GET".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
+                return;
+            }
+            
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
                 return;
             }
             
@@ -444,6 +526,14 @@ public class FriendController {
                     sendJson(exchange, 400, new JSONObject()
                         .put("success", false)
                         .put("message", "userId is required"));
+                    return;
+                }
+                
+                // Verify user can only list their own pending requests
+                if (!userId.equals(authenticatedUserId)) {
+                    sendJson(exchange, 403, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Forbidden: Cannot list pending requests for another user"));
                     return;
                 }
 
@@ -505,9 +595,14 @@ public class FriendController {
     }
 
     private static void addCors(HttpExchange exchange) {
-        exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
+        // In production, replace with specific allowed origins from environment variable
+        String allowedOrigin = System.getenv("ALLOWED_ORIGIN");
+        if (allowedOrigin == null || allowedOrigin.isEmpty()) {
+            allowedOrigin = "*"; // Default to wildcard for development
+        }
+        exchange.getResponseHeaders().add("Access-Control-Allow-Origin", allowedOrigin);
         exchange.getResponseHeaders().add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        exchange.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type");
+        exchange.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
 
     private static void sendJson(HttpExchange exchange, int status, JSONObject json) throws IOException {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -16,487 +16,96 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BottomNavBar from '../components/BottomNavBar';
 import { colors, spacing, typography } from '../styles/theme';
-import { createReceipt, claimItem, unclaimItem, getItemAssignments, payReceipt, addParticipantsToReceipt, getReceiptDetails } from '../services/receiptsService';
-import { getFriendsList } from '../services/friendsService';
+import { createReceipt, addParticipantsToReceipt } from '../services/receiptsService';
+import { calculateItemTotal, getMyItems, calculateMyItemsTotal } from '../utils/billCalculations';
+import { getInitials } from '../utils/formatting';
+import { useBillReviewData } from '../hooks/useBillReviewData';
+import { useItemClaims } from '../hooks/useItemClaims';
+import { useReceiptPayment } from '../hooks/useReceiptPayment';
+import { useFriendsSelection } from '../hooks/useFriendsSelection';
+import BillReviewHeader from '../components/billReview/BillReviewHeader';
+import ItemsList from '../components/billReview/ItemsList';
+import PaymentSection from '../components/billReview/PaymentSection';
+import BillSummary from '../components/billReview/BillSummary';
+import ParticipantsList from '../components/billReview/ParticipantsList';
+import CompletedIndicator from '../components/billReview/CompletedIndicator';
+import FriendsInvite from '../components/billReview/FriendsInvite';
 
 export default function BillReview() {
   const navigation = useNavigation();
   const route = useRoute();
-  
-  // Default mock data - will be replaced by parsed receipt data
-  const defaultBillData = {
-    restaurant_name: "Mario's Italian Kitchen",
-    date: "Today, 7:30 PM",
-    items: [
-      { id: 1, name: "Caesar Salad", price: 12.99 },
-      { id: 2, name: "Margherita Pizza", price: 18.50 },
-      { id: 3, name: "Spaghetti Carbonara", price: 16.75 },
-      { id: 4, name: "Chicken Parmesan", price: 22.95 },
-      { id: 5, name: "Tiramisu", price: 8.50 },
-      { id: 6, name: "House Wine (2 glasses)", price: 24.00 }
-    ],
-    tax: 10.37,
-    tip: 20.00,
-    total: 133.06
-  };
-
-  const [billData, setBillData] = useState(defaultBillData);
-  const [friendsEmails, setFriendsEmails] = useState('');
-  const [isCreating, setIsCreating] = useState(false);
-  const [friends, setFriends] = useState([]);
-  const [showFriendsDropdown, setShowFriendsDropdown] = useState(false);
-  const [selectedFriendEmails, setSelectedFriendEmails] = useState([]);
-  const [isLoadingFriends, setIsLoadingFriends] = useState(false);
-  const [isFromCamera, setIsFromCamera] = useState(false);
-  const [isFromActivity, setIsFromActivity] = useState(false);
-  const [receiptId, setReceiptId] = useState(null);
-  const [uploadedBy, setUploadedBy] = useState(null);
-  const [isUploader, setIsUploader] = useState(false);
-  const [itemAssignments, setItemAssignments] = useState({}); // itemId -> quantity
-  const [itemPaymentInfo, setItemPaymentInfo] = useState({}); // itemId -> {paidBy, payerName, paidAt}
-  const [owedAmount, setOwedAmount] = useState(0); // Total amount for "Your Share" and "What You Paid For"
-  const [owedAmountExcludingPaid, setOwedAmountExcludingPaid] = useState(0); // Remaining amount owed after subtracting paid items
-  const [userHasPaid, setUserHasPaid] = useState(false); // Boolean: true only after payment is fully processed
-  const [isReceiptComplete, setIsReceiptComplete] = useState(false); // Track if receipt is complete (all items paid)
-  const [hasCheckedCompleteStatus, setHasCheckedCompleteStatus] = useState(false); // Track if we've checked complete status
-  const [isLoadingAssignments, setIsLoadingAssignments] = useState(false);
-  const [claimingItems, setClaimingItems] = useState(new Set()); // Track items being claimed to prevent double-clicks
   const scrollViewRef = useRef(null);
   const emailInputRef = useRef(null);
-
-  // Check for parsed receipt data from route params or AsyncStorage
-  useEffect(() => {
-    // First check route params (from HomeScreen navigation or Activity)
-    const routeData = route.params?.data;
-    const routeReceiptId = route.params?.receiptId;
-    const routeIsFromActivity = route.params?.isFromActivity;
-    const routeUploadedBy = route.params?.uploadedBy;
-    
-    if (routeReceiptId) {
-      setReceiptId(routeReceiptId);
-    }
-    
-    if (routeUploadedBy) {
-      setUploadedBy(routeUploadedBy);
-    }
-    
-    if (routeIsFromActivity) {
-      setIsFromActivity(true);
-      setIsFromCamera(false);
-    }
-    
-    // Initialize userHasPaid from route params if provided
-    // Only set to true if explicitly passed and true (after actual payment)
-    const routeUserHasPaid = route.params?.userHasPaid;
-    if (routeUserHasPaid === true) {
-      setUserHasPaid(true);
-    } else {
-      // Default to false - only set to true after successful payment
-      setUserHasPaid(false);
-    }
-    
-    // Initialize isReceiptComplete from route params if provided (from ActivityScreen)
-    // This prevents the flicker by using the status already fetched
-    const routeIsReceiptComplete = route.params?.isReceiptComplete;
-    if (routeIsReceiptComplete !== undefined) {
-      setIsReceiptComplete(routeIsReceiptComplete);
-      setHasCheckedCompleteStatus(true); // Mark as checked so we don't make duplicate API call
-      console.log('BillReview: Set isReceiptComplete from route params:', routeIsReceiptComplete);
-    }
-    
-    if (routeData) {
-      try {
-        console.log('BillReview: Received routeData:', {
-          isFromActivity: routeIsFromActivity,
-          itemsCount: routeData.items ? routeData.items.length : 0,
-          items: routeData.items,
-          receiptId: routeReceiptId,
-        });
-        
-        // Transform backend data to match our format
-        const transformedData = transformReceiptData(routeData);
-        
-        console.log('BillReview: Transformed data:', {
-          itemsCount: transformedData.items.length,
-          items: transformedData.items,
-        });
-        
-        setBillData(transformedData);
-        if (!routeIsFromActivity) {
-          setIsFromCamera(true);
-        }
-      } catch (error) {
-        console.error('Error processing route data:', error);
-      }
-    } else {
-      // Check AsyncStorage as fallback
-      AsyncStorage.getItem('parsedReceiptData').then((parsedData) => {
-        if (parsedData) {
-          try {
-            const receiptData = JSON.parse(parsedData);
-            const transformedData = transformReceiptData(receiptData);
-            setBillData(transformedData);
-            setIsFromCamera(true);
-            // Clear the storage after using it
-            AsyncStorage.removeItem('parsedReceiptData');
-          } catch (error) {
-            console.error('Error parsing receipt data:', error);
-          }
-        }
-      });
-    }
-  }, [route.params]);
-
-  // Check if user is uploader and load item assignments if viewing from Activity
-  useEffect(() => {
-    const checkIfUploader = async () => {
-      if (uploadedBy) {
-        const userId = await AsyncStorage.getItem('userId');
-        setIsUploader(userId === uploadedBy);
-      }
-    };
-    checkIfUploader();
-  }, [uploadedBy]);
-
-  // Load item assignments if viewing from Activity
-  // This loads payment info from the database so we can show "Paid by [name]" for paid items
-  useEffect(() => {
-    console.log('BillReview useEffect - isFromActivity:', isFromActivity, 'receiptId:', receiptId, 'hasCheckedCompleteStatus:', hasCheckedCompleteStatus);
-    if (isFromActivity && receiptId) {
-      console.log('Loading item assignments and payment info for receiptId:', receiptId);
-      loadItemAssignments();
-      // Only check complete status if we don't already have it from route params
-      // This prevents duplicate API call and eliminates flicker
-      if (!hasCheckedCompleteStatus) {
-        checkReceiptCompleteStatus();
-      } else {
-        console.log('BillReview: Skipping checkReceiptCompleteStatus - already have status from route params');
-      }
-    }
-  }, [isFromActivity, receiptId, hasCheckedCompleteStatus, loadItemAssignments, checkReceiptCompleteStatus]);
   
-  // Function to check if receipt is complete
-  const checkReceiptCompleteStatus = React.useCallback(async () => {
-    if (!receiptId) return;
-    
-    try {
-      const response = await getReceiptDetails(receiptId);
-      if (response.success && response.receipt) {
-        const isComplete = response.receipt.complete === true || response.receipt.complete === 1 || response.receipt.complete === '1';
-        setIsReceiptComplete(isComplete);
-        setHasCheckedCompleteStatus(true); // Mark as checked
-        console.log('Receipt complete status:', isComplete, 'for receiptId:', receiptId);
-      }
-    } catch (error) {
-      console.error('Error checking receipt complete status:', error);
-    }
-  }, [receiptId]);
+  // Use custom hooks for data management
+  const { billData, setBillData, isFromCamera, isFromActivity, receiptId, uploadedBy } = useBillReviewData(route);
+  const { itemAssignments, setItemAssignments, claimingItems, handleToggleItemClaim } = useItemClaims(receiptId, billData);
+  const {
+    itemPaymentInfo,
+    owedAmount,
+    owedAmountExcludingPaid,
+    userHasPaid,
+    setUserHasPaid,
+    isReceiptComplete,
+    isLoadingAssignments,
+    isUploader,
+    handlePay,
+    updateOwedAmounts,
+  } = useReceiptPayment(receiptId, isFromActivity, uploadedBy, billData, itemAssignments, setItemAssignments);
+  const {
+    friends,
+    friendsEmails,
+    setFriendsEmails,
+    selectedFriendEmails,
+    showFriendsDropdown,
+    setShowFriendsDropdown,
+    isLoadingFriends,
+    handleFriendSelect,
+    handleRemoveSelectedFriend,
+  } = useFriendsSelection(isFromActivity);
   
-  // Also reload when screen comes into focus to get latest payment status and item claims
-  // This ensures we see updates when someone else claims items
-  // Note: We always check complete status on focus in case receipt was completed while viewing
-  useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => {
-      if (isFromActivity && receiptId) {
-        console.log('BillReview screen focused - reloading payment info and item assignments');
-        loadItemAssignments();
-        // Always check complete status on focus (receipt might have been completed while viewing)
-        checkReceiptCompleteStatus();
-      }
-    });
-    return unsubscribe;
-  }, [navigation, isFromActivity, receiptId, loadItemAssignments, checkReceiptCompleteStatus]);
-
-  const loadItemAssignments = React.useCallback(async () => {
-    if (!receiptId) return;
-    
-    setIsLoadingAssignments(true);
-    try {
-      const response = await getItemAssignments(receiptId);
-      if (response.success) {
-        const backendAssignments = response.assignments || {};
-        const expandedAssignments = {};
-        
-        // Map backend assignments (by original itemId) to expanded itemIds
-        // Backend returns: { "1": 2 } means itemId 1 has qty 2 claimed
-        // Expanded items: "1_0", "1_1" (if original qty was 2)
-        // So we need to mark "1_0" and "1_1" as claimed if backend says "1" has qty 2 claimed
-        billData.items.forEach((item) => {
-          const expandedItemId = item.itemId || item.id;
-          const originalItemId = item.originalItemId || expandedItemId;
-          
-          // If this is an expanded item, check the original itemId's assignment
-          if (item.originalItemId) {
-            const claimedQty = backendAssignments[originalItemId] || 0;
-            // Find which instance this is (e.g., "1_0" is instance 0, "1_1" is instance 1)
-            const instanceMatch = expandedItemId.match(/_(\d+)$/);
-            const instanceIndex = instanceMatch ? parseInt(instanceMatch[1]) : 0;
-            
-            // Mark as claimed if this instance is within the claimed quantity
-            if (instanceIndex < claimedQty) {
-              expandedAssignments[expandedItemId] = 1;
-            }
-          } else {
-            // Not an expanded item, use assignment directly
-            if (backendAssignments[originalItemId]) {
-              expandedAssignments[expandedItemId] = backendAssignments[originalItemId];
-            }
-          }
-        });
-        
-        setItemAssignments(expandedAssignments);
-        const newOwedAmount = response.owedAmount || 0;
-        const newOwedAmountExcludingPaid = response.owedAmountExcludingPaid || 0;
-        setOwedAmount(newOwedAmount);
-        setOwedAmountExcludingPaid(newOwedAmountExcludingPaid);
-        
-        // Store payment info for all items - this shows which items are paid and by whom
-        // Map payment info from original itemIds to expanded itemIds
-        const backendPaymentInfo = response.itemPaymentInfo || {};
-        const expandedPaymentInfo = {};
-        
-        billData.items.forEach((item) => {
-          const expandedItemId = item.itemId || item.id;
-          const originalItemId = item.originalItemId || expandedItemId;
-          const paymentInfo = backendPaymentInfo[String(originalItemId)] || backendPaymentInfo[originalItemId];
-          
-          if (paymentInfo) {
-            expandedPaymentInfo[expandedItemId] = paymentInfo;
-          }
-        });
-        
-        setItemPaymentInfo(expandedPaymentInfo);
-        console.log('Loaded payment info for', Object.keys(expandedPaymentInfo).length, 'items:', expandedPaymentInfo);
-        
-        // Check if user has actually paid
-        // Only set userHasPaid to true if:
-        // 1. User has items claimed (assignments exist) AND
-        // 2. Owed amount is 0 or very close to 0 AND
-        // 3. We have payment info for items (meaning payment was actually made)
-        // This prevents false positives when user hasn't claimed anything yet
-        const hasItemsClaimed = Object.keys(response.assignments || {}).length > 0;
-        const hasPaymentInfo = Object.keys(expandedPaymentInfo).length > 0;
-        const hasNoOwedAmount = newOwedAmount <= 0.01;
-        
-        // Only mark as paid if user has claimed items AND paid for them
-        const hasPaid = hasItemsClaimed && hasNoOwedAmount && hasPaymentInfo;
-        
-        // Always set based on actual payment status
-        setUserHasPaid(hasPaid);
-        
-        console.log('Payment status check - hasPaid:', hasPaid, 'hasItemsClaimed:', hasItemsClaimed, 'owedAmount:', newOwedAmount, 'paymentInfo items:', Object.keys(expandedPaymentInfo).length);
-      } else {
-        console.error('Failed to load item assignments:', response.message);
-      }
-    } catch (error) {
-      console.error('Error loading item assignments:', error);
-      // Don't show alert - network errors are usually temporary
-    } finally {
-      setIsLoadingAssignments(false);
-    }
-  }, [receiptId]);
-
-  const handleToggleItemClaim = async (itemId) => {
-    if (!receiptId) return;
-    
-    // Prevent double-clicks and concurrent claims on the same item
-    if (claimingItems.has(itemId)) {
-      return; // Already processing this item
-    }
-    
-    // Find the item to get its originalItemId (for backend) or use itemId if not expanded
-    const item = billData.items.find(i => (i.itemId || i.id) === itemId);
-    const backendItemId = item?.originalItemId || itemId; // Use originalItemId if available, otherwise use itemId
-    
-    const isClaimed = itemAssignments[itemId] && itemAssignments[itemId] > 0;
-    
-    // Mark item as being processed
-    setClaimingItems(prev => new Set(prev).add(itemId));
-    
-    // Optimistic update: Update UI immediately before API call completes
-    const previousAssignments = { ...itemAssignments };
-    const newAssignments = { ...itemAssignments };
-    if (isClaimed) {
-      delete newAssignments[itemId];
-    } else {
-      newAssignments[itemId] = 1;
-    }
-    setItemAssignments(newAssignments); // Update UI immediately - instant feedback!
-    
-    try {
-      let response;
-      if (isClaimed) {
-        response = await unclaimItem(receiptId, backendItemId);
-      } else {
-        response = await claimItem(receiptId, backendItemId, 1);
-      }
-      
-      if (response.success) {
-        // Update owedAmount from server (response already has the correct values)
-        setOwedAmount(response.owedAmount || 0);
-        setOwedAmountExcludingPaid(response.owedAmountExcludingPaid || 0);
-        // No need to reload - optimistic update already shows the claim, and amounts are correct
-        // Only reload if we need to see other users' claims (which happens on screen focus anyway)
-      } else {
-        // Rollback optimistic update on error
-        setItemAssignments(previousAssignments);
-        Alert.alert('Error', response.message || 'Failed to update item claim');
-        // Don't reload - just rollback is enough, avoids flickering
-      }
-    } catch (error) {
-      // Rollback optimistic update on error
-      setItemAssignments(previousAssignments);
-      console.error('Error toggling item claim:', error);
-      Alert.alert('Error', 'Failed to update item claim');
-      // Don't reload - just rollback is enough, avoids flickering
-    } finally {
-      // Remove from claiming set so item can be clicked again
-      setClaimingItems(prev => {
-        const next = new Set(prev);
-        next.delete(itemId);
-        return next;
-      });
-    }
-  };
-
-  const handlePay = async () => {
-    if (!receiptId) return;
-    
-    Alert.alert(
-      'Confirm Payment',
-      `Pay $${owedAmountExcludingPaid.toFixed(2)} for your portion of this receipt?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Pay',
-          onPress: async () => {
-            try {
-              const response = await payReceipt(receiptId);
-              
-              if (response.success) {
-                // Payment was successful - set userHasPaid to true
-                setUserHasPaid(true);
-                
-                // Update owed amount
-                const newOwedAmount = response.owedAmount || 0;
-                const newOwedAmountExcludingPaid = response.owedAmountExcludingPaid || 0;
-                setOwedAmount(newOwedAmount);
-                setOwedAmountExcludingPaid(newOwedAmountExcludingPaid);
-                
-                // Update item payment info from response
-                if (response.itemPaymentInfo) {
-                  setItemPaymentInfo(prev => ({
-                    ...prev,
-                    ...response.itemPaymentInfo
-                  }));
-                }
-                
-                // Reload item assignments to get fresh payment info from database
-                // This ensures "Paid by [name]" shows correctly
-                await loadItemAssignments();
-                
-                // After reload, ensure userHasPaid stays true (payment was successful)
-                setUserHasPaid(true);
-                
-                // Show success message
-                const message = response.receiptCompleted
-                  ? `Payment successful! Receipt is now completed.`
-                  : `Payment successful! $${response.amountPaid?.toFixed(2)} paid.`;
-                
-                Alert.alert('Success', message);
-              } else {
-                // Payment failed - keep userHasPaid as false
-                setUserHasPaid(false);
-                Alert.alert('Payment Failed', response.message || 'Failed to process payment');
-              }
-            } catch (error) {
-              console.error('Error processing payment:', error);
-              Alert.alert('Error', 'Failed to process payment. Please try again.');
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  // Transform backend receipt data to match our expected format
-  const transformReceiptData = (data) => {
-    // Backend parser returns: items (with name, qty, price), subtotal, tax, total, merchant
-    // Note: price in items might be per-item or line total - we'll treat it as per-item
-    // Expand items with qty > 1 into multiple items with qty=1 so users can claim individually
-    const expandedItems = [];
-    let itemIndex = 0;
-    
-    (data.items || []).forEach((item, originalIndex) => {
-      const baseItemId = item.itemId || item.id || (originalIndex + 1);
-      const qty = item.qty || item.quantity || 1;
-      const price = parseFloat(item.price) || 0;
-      const name = item.name || 'Unknown Item';
-      
-      // Create one item per quantity, each with qty=1
-      for (let i = 0; i < qty; i++) {
-        expandedItems.push({
-          itemId: `${baseItemId}_${i}`, // Unique ID for each instance (e.g., "1_0", "1_1")
-          originalItemId: baseItemId, // Keep reference to original itemId for backend operations
-          id: `${baseItemId}_${i}`,
-          name: name,
-          price: price, // Price per item
-          qty: 1, // Always 1 for expanded items
-        });
-        itemIndex++;
-      }
-    });
-
-    const total = parseFloat(data.total) || 0;
-    const tax = parseFloat(data.tax) || 0;
-    const tip = parseFloat(data.tip) || 0;
-    const subtotal = parseFloat(data.subtotal) || 0;
-    
-    // Calculate subtotal if not provided (sum of price * qty for all items)
-    // Since all items now have qty=1, this is just sum of prices
-    const calculatedSubtotal = subtotal || (expandedItems.reduce((sum, item) => sum + item.price, 0));
-    
-    // Calculate tip if not provided (as difference between total and subtotal + tax)
-    const calculatedTip = tip || Math.max(0, total - calculatedSubtotal - tax);
-
-    return {
-      restaurant_name: data.merchant || data.restaurant_name || 'Unknown Merchant',
-      date: data.date || new Date().toLocaleDateString(),
-      items: expandedItems,
-      tax: tax || 0,
-      tip: calculatedTip,
-      total: total,
-      subtotal: calculatedSubtotal,
-    };
-  };
+  const [isCreating, setIsCreating] = useState(false);
 
   const subtotal = billData.subtotal || (billData.total - billData.tax - billData.tip);
 
-  // Helper function to calculate item total with tax and tip
-  const calculateItemTotal = (itemPrice) => {
-    if (!subtotal || subtotal === 0) return itemPrice;
-    const proportion = itemPrice / subtotal;
-    const itemTax = billData.tax * proportion;
-    const itemTip = billData.tip * proportion;
-    return itemPrice + itemTax + itemTip;
+  // Wrapper functions to use billData context
+  const calculateItemTotalWithContext = (itemPrice) => {
+    return calculateItemTotal(itemPrice, subtotal, billData.tax, billData.tip);
   };
 
-  // Get user's claimed items
-  const getMyItems = () => {
-    return billData.items.filter((item) => {
-      const itemId = item.itemId || item.id;
-      return itemAssignments[itemId] && itemAssignments[itemId] > 0;
-    }).map((item) => {
-      const itemId = item.itemId || item.id;
-      const qty = itemAssignments[itemId] || 1;
-      return {
-        ...item,
-        qty: qty,
-        totalPrice: item.price * qty,
-      };
-    });
+  const getMyItemsWithContext = () => {
+    return getMyItems(billData.items, itemAssignments);
   };
 
+  // Handle item claim with owed amount updates
+  const handleItemClaimWithUpdate = async (itemId) => {
+    const response = await handleToggleItemClaim(itemId);
+    if (response && response.success) {
+      // Update owed amounts from response immediately for instant feedback
+      if (response.owedAmount !== undefined) {
+        updateOwedAmounts(response.owedAmount, response.owedAmountExcludingPaid || response.owedAmount);
+      }
+    }
+  };
+
+  // Handle payment with proper success handling
+  const handlePayWithAlert = async () => {
+    const response = await handlePay();
+    if (response && response.success) {
+      const amountPaid = response.amountPaid || response.owedAmountExcludingPaid || 0;
+      const message = `Payment successful! $${amountPaid.toFixed(2)} paid.`;
+      Alert.alert('Success', message);
+    } else if (response === null) {
+      // User cancelled
+      return;
+    } else {
+      // Payment failed
+      const errorMessage = response?.message || 'Failed to process payment. Please try again.';
+      Alert.alert('Payment Failed', errorMessage);
+    }
+  };
+
+  // Get other participants and their paid items
   const [otherParticipants, setOtherParticipants] = useState([]);
   const [currentUserId, setCurrentUserId] = useState(null);
 
@@ -508,69 +117,6 @@ export default function BillReview() {
     };
     loadUserId();
   }, []);
-
-  // Load friends list when creating new receipt (not from activity)
-  useEffect(() => {
-    if (!isFromActivity) {
-      loadFriends();
-    }
-  }, [isFromActivity]);
-
-  // Sync selectedFriendEmails with friendsEmails when manually typed
-  useEffect(() => {
-    if (!isFromActivity) {
-      const typedEmails = friendsEmails.split(',').map(e => e.trim()).filter(e => e);
-      // Remove selected friends that are no longer in the typed emails
-      const remainingSelected = selectedFriendEmails.filter(email => 
-        typedEmails.includes(email)
-      );
-      if (remainingSelected.length !== selectedFriendEmails.length) {
-        setSelectedFriendEmails(remainingSelected);
-      }
-    }
-  }, [friendsEmails]);
-
-  const loadFriends = async () => {
-    setIsLoadingFriends(true);
-    try {
-      const response = await getFriendsList();
-      if (response.success) {
-        setFriends(response.friends || []);
-      }
-    } catch (error) {
-      console.error('Error loading friends:', error);
-    } finally {
-      setIsLoadingFriends(false);
-    }
-  };
-
-  const handleFriendSelect = (friendEmail) => {
-    // Add friend email to selected list if not already selected
-    if (!selectedFriendEmails.includes(friendEmail)) {
-      const newSelected = [...selectedFriendEmails, friendEmail];
-      setSelectedFriendEmails(newSelected);
-      
-      // Also add to friendsEmails string (comma-separated)
-      const currentEmails = friendsEmails.split(',').map(e => e.trim()).filter(e => e);
-      if (!currentEmails.includes(friendEmail)) {
-        const updatedEmails = currentEmails.length > 0 
-          ? `${friendsEmails}, ${friendEmail}`
-          : friendEmail;
-        setFriendsEmails(updatedEmails);
-      }
-    }
-    // Close dropdown after selection
-    setShowFriendsDropdown(false);
-  };
-
-  const handleRemoveSelectedFriend = (emailToRemove) => {
-    const newSelected = selectedFriendEmails.filter(email => email !== emailToRemove);
-    setSelectedFriendEmails(newSelected);
-    
-    // Remove from friendsEmails string
-    const currentEmails = friendsEmails.split(',').map(e => e.trim()).filter(e => e && e !== emailToRemove);
-    setFriendsEmails(currentEmails.join(', '));
-  };
 
   // Get other participants and their paid items
   useEffect(() => {
@@ -586,61 +132,31 @@ export default function BillReview() {
       const itemId = item.itemId || item.id;
       const paymentInfo = itemPaymentInfo[String(itemId)] || itemPaymentInfo[itemId];
       
-      if (paymentInfo && paymentInfo.paidBy && paymentInfo.paidBy !== currentUserId) {
-        const payerId = paymentInfo.paidBy;
-        const payerName = paymentInfo.payerName || 'Unknown';
-        
-        if (!participantsMap.has(payerId)) {
-          participantsMap.set(payerId, {
-            userId: payerId,
-            name: payerName,
-            initials: getInitials(payerName),
-            items: [],
-            totalAmount: 0,
-          });
-        }
-        
-        const participant = participantsMap.get(payerId);
-        const itemTotal = calculateItemTotal(item.price); // qty is always 1 for expanded items
-        participant.items.push(item.name);
-        participant.totalAmount += itemTotal;
-      }
+                    if (paymentInfo && paymentInfo.paidBy && paymentInfo.paidBy !== currentUserId) {
+                      const payerId = paymentInfo.paidBy;
+                      const payerName = paymentInfo.payerName || 'Unknown';
+                      
+                      if (!participantsMap.has(payerId)) {
+                        participantsMap.set(payerId, {
+                          userId: payerId,
+                          name: payerName,
+                          initials: getInitials(payerName),
+                          items: [],
+                          totalAmount: 0,
+                        });
+                      }
+                      
+                      const participant = participantsMap.get(payerId);
+                      const itemTotal = calculateItemTotalWithContext(item.price); // qty is always 1 for expanded items
+                      participant.items.push(item.name);
+                      participant.totalAmount += itemTotal;
+                    }
     });
     
     setOtherParticipants(Array.from(participantsMap.values()));
   }, [itemPaymentInfo, isFromActivity, receiptId, currentUserId, billData.items]);
 
-  // Get initials from name
-  const getInitials = (name) => {
-    if (!name) return '?';
-    const parts = name.trim().split(' ');
-    if (parts.length >= 2) {
-      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-    }
-    return name.substring(0, 2).toUpperCase();
-  };
-
-  const getAvatarColor = (name) => {
-    const colors = ['#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#8B5CF6', '#EC4899'];
-    const index = (name || '').length % colors.length;
-    return colors[index];
-  };
-
-  // Format date for display
-  const formatDisplayDate = (dateStr) => {
-    if (!dateStr) return 'Unknown date';
-    try {
-      const date = new Date(dateStr);
-      if (isNaN(date.getTime())) return dateStr;
-      return date.toLocaleDateString('en-US', { 
-        month: 'long', 
-        day: 'numeric', 
-        year: 'numeric' 
-      });
-    } catch {
-      return dateStr;
-    }
-  };
+  // getInitials, getAvatarColor, and formatDisplayDate are now imported from utils/formatting.js
 
   const handleCreateAndShare = async () => {
     // Combine emails from both text input and selected friends, then deduplicate
@@ -716,29 +232,16 @@ export default function BillReview() {
     setIsCreating(false);
   };
 
-  const myItems = getMyItems();
-  const myItemsTotal = myItems.reduce((sum, item) => sum + calculateItemTotal(item.totalPrice), 0);
+  const myItems = getMyItemsWithContext();
+  const myItemsTotal = calculateMyItemsTotal(myItems, subtotal, billData.tax, billData.tip);
 
   return (
     <View style={styles.wrapper}>
-      {/* Header with Back Button */}
-      <View style={styles.headerContainer}>
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Ionicons name="arrow-back" size={24} color="#111827" />
-        </TouchableOpacity>
-        <View style={styles.headerContent}>
-          <Text style={styles.headerTitle}>{billData.restaurant_name}</Text>
-          <View style={styles.headerDateRow}>
-            <Ionicons name="time-outline" size={14} color="#6B7280" />
-            <Text style={styles.headerDate}>
-              {formatDisplayDate(billData.date)} • {billData.date.includes('PM') || billData.date.includes('AM') ? billData.date.split(' ').slice(-2).join(' ') : ''}
-            </Text>
-          </View>
-        </View>
-      </View>
+      <BillReviewHeader
+        restaurantName={billData.restaurant_name}
+        date={billData.date}
+        onBackPress={() => navigation.goBack()}
+      />
 
       <KeyboardAvoidingView 
         style={styles.keyboardAvoid}
@@ -752,84 +255,8 @@ export default function BillReview() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-        {/* Payment Summary Card */}
-        {isFromActivity && userHasPaid && (
-          <View style={styles.paymentSummaryCard}>
-            <View style={styles.paymentSummaryContent}>
-              <View>
-                <Text style={styles.paymentAmount}>${myItemsTotal.toFixed(2)}</Text>
-                <Text style={styles.paymentLabel}>You paid</Text>
-              </View>
-              <View style={styles.paymentStatus}>
-                <Ionicons name="checkmark-circle" size={24} color="#0d9488" />
-                <View style={styles.paidBadgeLarge}>
-                  <Text style={styles.paidBadgeLargeText}>Paid</Text>
-                </View>
-              </View>
-            </View>
-          </View>
-        )}
+        <ParticipantsList participants={otherParticipants} />
 
-        {/* What You Paid For - Only show if user has claimed items */}
-        {isFromActivity && myItems.length > 0 && (
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>What You Paid For</Text>
-            </View>
-            <View style={styles.cardContent}>
-              {myItems.map((item, index) => (
-                <View key={item.itemId || item.id} style={styles.myItemRow}>
-                  <View style={styles.myItemInfo}>
-                    <Text style={styles.myItemName}>{item.name}</Text>
-                    <Text style={styles.myItemSubtext}>Item: ${item.price.toFixed(2)}</Text>
-                  </View>
-                  <Text style={styles.myItemTotal}>${calculateItemTotal(item.totalPrice).toFixed(2)}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-        )}
-
-        {/* Other People - Show participants who have paid */}
-        {isFromActivity && otherParticipants.length > 0 && (
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <View style={styles.cardHeaderWithIcon}>
-                <Ionicons name="people-outline" size={20} color="#111827" />
-                <Text style={styles.cardTitle}>
-                  Other People ({otherParticipants.length})
-                </Text>
-              </View>
-            </View>
-            <View style={styles.cardContent}>
-              {otherParticipants.map((participant, index) => (
-                <View key={participant.userId}>
-                  <View style={styles.participantRow}>
-                    <View style={styles.participantLeft}>
-                      <View style={styles.avatar}>
-                        <Text style={styles.avatarText}>{participant.initials}</Text>
-                      </View>
-                      <View style={styles.participantInfo}>
-                        <Text style={styles.participantName}>{participant.name}</Text>
-                        <Text style={styles.participantAmount}>${participant.totalAmount.toFixed(2)}</Text>
-                      </View>
-                    </View>
-                  </View>
-                  <View style={styles.participantItems}>
-                    {participant.items.map((itemName, itemIndex) => (
-                      <Text key={itemIndex} style={styles.participantItemText}>
-                        • {itemName}
-                      </Text>
-                    ))}
-                  </View>
-                  {index < otherParticipants.length - 1 && <View style={styles.separator} />}
-                </View>
-              ))}
-            </View>
-          </View>
-        )}
-
-        {/* All Items - For claiming (when not paid) or viewing all items */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <Text style={styles.cardTitle}>
@@ -837,296 +264,62 @@ export default function BillReview() {
             </Text>
           </View>
           <View style={styles.cardContent}>
-            {billData.items.length === 0 ? (
-              <View style={styles.emptyItemsContainer}>
-                <Text style={styles.emptyItemsText}>No items found</Text>
-              </View>
-            ) : (
-              billData.items.map((item, index) => {
-                const itemId = item.itemId || item.id;
-                const isClaimed = itemId && itemAssignments[itemId] && itemAssignments[itemId] > 0;
-                const paymentInfo = itemPaymentInfo[String(itemId)] || itemPaymentInfo[itemId] || null;
-                const isPaid = paymentInfo != null;
-                const payerName = paymentInfo?.payerName || null;
-                const isClaiming = claimingItems.has(itemId);
-                
-                return (
-                  <View key={itemId || index}>
-                    <TouchableOpacity
-                      style={[
-                        styles.itemRow, 
-                        isFromActivity && !isPaid && styles.itemRowClickable,
-                        isPaid && styles.itemRowPaid,
-                        isClaiming && styles.itemRowProcessing
-                      ]}
-                      onPress={isFromActivity && !isPaid && !isClaiming && !isReceiptComplete ? () => handleToggleItemClaim(itemId) : undefined}
-                      disabled={!isFromActivity || isPaid || isClaiming || isReceiptComplete}
-                      activeOpacity={isFromActivity && !isPaid && !isClaiming ? 0.7 : 1}
-                    >
-                      <View style={styles.itemInfo}>
-                        <View style={styles.itemNameRow}>
-                          <View style={styles.itemNameContainer}>
-                            <View style={styles.itemNameWithIcon}>
-                              {isPaid && (
-                                <Ionicons name="checkmark-circle" size={14} color="#0d9488" style={styles.paidIcon} />
-                              )}
-                              <Text style={[styles.itemName, isPaid && styles.itemNamePaid]}>{item.name}</Text>
-                            </View>
-                            {isPaid && (
-                              <Text style={styles.paidByText}>Paid by {payerName || 'Someone'}</Text>
-                            )}
-                            {!isPaid && isFromActivity && !isReceiptComplete && (
-                              <View style={[styles.claimBadge, isClaimed && styles.claimBadgeActive]}>
-                                <Ionicons 
-                                  name={isClaimed ? "checkmark-circle" : "ellipse-outline"} 
-                                  size={16} 
-                                  color={isClaimed ? "#0d9488" : "#9CA3AF"} 
-                                />
-                                <Text style={[styles.claimBadgeText, isClaimed && styles.claimBadgeTextActive]}>
-                                  {isClaimed ? "Claimed" : "Tap to claim"}
-                                </Text>
-                              </View>
-                            )}
-                          </View>
-                        </View>
-                        {/* Qty is always 1 for expanded items, so no need to show qty */}
-                      </View>
-                      <Text style={[styles.itemPrice, isPaid && styles.itemPricePaid]}>
-                        ${item.price.toFixed(2)}
-                      </Text>
-                    </TouchableOpacity>
-                    {index < billData.items.length - 1 && <View style={styles.separator} />}
-                  </View>
-                );
-              })
-            )}
+            <ItemsList
+              items={billData.items}
+              itemAssignments={itemAssignments}
+              itemPaymentInfo={itemPaymentInfo}
+              claimingItems={claimingItems}
+              isFromActivity={isFromActivity}
+              isReceiptComplete={isReceiptComplete}
+              onItemPress={handleItemClaimWithUpdate}
+            />
           </View>
         </View>
 
-        {/* Your Portion - Payment Section (only shown when viewing from Activity, not paid, and receipt not complete) */}
-        {isFromActivity && !userHasPaid && !isReceiptComplete && (
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>Your Portion</Text>
-            </View>
-            <View style={styles.cardContent}>
-              <View style={styles.breakdownRow}>
-                <Text style={styles.totalLabelBold}>Amount Owed</Text>
-                <Text style={styles.totalValueBold}>${owedAmountExcludingPaid.toFixed(2)}</Text>
-              </View>
-              {Object.keys(itemAssignments).length === 0 && (
-                <Text style={styles.hintText}>Tap items above to claim them and calculate your portion</Text>
-              )}
-              {owedAmountExcludingPaid > 0.01 && (
-                <TouchableOpacity style={styles.payButton} onPress={handlePay}>
-                  <Ionicons name="card-outline" size={20} color="#fff" />
-                  <Text style={styles.payButtonText}>Pay ${owedAmountExcludingPaid.toFixed(2)}</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
-        )}
+        <PaymentSection
+          isFromActivity={isFromActivity}
+          userHasPaid={userHasPaid}
+          isReceiptComplete={isReceiptComplete}
+          myItems={myItems}
+          myItemsTotal={myItemsTotal}
+          owedAmountExcludingPaid={owedAmountExcludingPaid}
+          itemAssignments={itemAssignments}
+          onPayPress={handlePayWithAlert}
+          calculateItemTotal={calculateItemTotalWithContext}
+        />
 
-        {/* Completed Receipt Indicator - Shown when receipt is complete */}
-        {isFromActivity && isReceiptComplete && (
-          <View style={styles.completedCard}>
-            <View style={styles.completedHeader}>
-              <View style={styles.completedBadge}>
-                <Ionicons name="checkmark-circle" size={24} color="#10B981" />
-                <Text style={styles.completedTitle}>Receipt Completed</Text>
-              </View>
-              <Text style={styles.completedSubtext}>
-                All items have been paid for. This receipt is now in your history.
-              </Text>
-            </View>
-          </View>
-        )}
+        {isFromActivity && isReceiptComplete && <CompletedIndicator />}
 
-        {/* Bill Summary */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Bill Summary</Text>
-          </View>
-          <View style={styles.cardContent}>
-            <View style={styles.breakdownRow}>
-              <Text style={styles.breakdownLabel}>Subtotal</Text>
-              <Text style={styles.breakdownValue}>${subtotal.toFixed(2)}</Text>
-            </View>
-            <View style={styles.breakdownRow}>
-              <Text style={styles.breakdownLabel}>Tax & Tip</Text>
-              <Text style={styles.breakdownValue}>${(billData.tax + billData.tip).toFixed(2)}</Text>
-            </View>
-            <View style={styles.separator} />
-            <View style={styles.breakdownRow}>
-              <Text style={styles.totalLabelBold}>Total Bill</Text>
-              <Text style={styles.totalValueBold}>${billData.total.toFixed(2)}</Text>
-            </View>
-            {isFromActivity && myItems.length > 0 && (
-              <View style={styles.breakdownRow}>
-                <Text style={styles.yourShareLabel}>Your Share</Text>
-                <Text style={styles.yourShareValue}>${myItemsTotal.toFixed(2)}</Text>
-              </View>
-            )}
-          </View>
-        </View>
+        <BillSummary
+          subtotal={subtotal}
+          tax={billData.tax}
+          tip={billData.tip}
+          total={billData.total}
+          myItemsTotal={myItemsTotal}
+          isFromActivity={isFromActivity}
+          myItemsCount={myItems.length}
+        />
 
-        {/* Invite Friends (only shown when creating new receipt, not from Activity) */}
         {!isFromActivity && (
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>Invite Friends</Text>
-            </View>
-            <View style={styles.inviteContent}>
-              {/* Friends Dropdown */}
-              <View style={styles.friendsDropdownContainer}>
-                <TouchableOpacity
-                  style={styles.friendsDropdownButton}
-                  onPress={() => setShowFriendsDropdown(!showFriendsDropdown)}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.friendsDropdownButtonContent}>
-                    <Ionicons name="people-outline" size={20} color="#0d9488" />
-                    <Text style={styles.friendsDropdownButtonText}>Friends</Text>
-                    <Ionicons 
-                      name={showFriendsDropdown ? "chevron-up" : "chevron-down"} 
-                      size={20} 
-                      color="#6B7280" 
-                    />
-                  </View>
-                </TouchableOpacity>
-                
-                {showFriendsDropdown && (
-                  <View style={styles.friendsDropdownList}>
-                    {isLoadingFriends ? (
-                      <View style={styles.friendsDropdownLoading}>
-                        <ActivityIndicator size="small" color="#0d9488" />
-                        <Text style={styles.friendsDropdownLoadingText}>Loading friends...</Text>
-                      </View>
-                    ) : friends.length === 0 ? (
-                      <View style={styles.friendsDropdownEmpty}>
-                        <Text style={styles.friendsDropdownEmptyText}>No friends yet</Text>
-                        <Text style={styles.friendsDropdownEmptySubtext}>Add friends from the Friends tab</Text>
-                      </View>
-                    ) : (
-                      <ScrollView 
-                        style={styles.friendsDropdownScroll}
-                        nestedScrollEnabled={true}
-                        showsVerticalScrollIndicator={true}
-                      >
-                        {friends.map((friend, index) => {
-                          const isSelected = selectedFriendEmails.includes(friend.email);
-                          return (
-                            <TouchableOpacity
-                              key={friend.userId || index}
-                              style={[
-                                styles.friendDropdownItem,
-                                isSelected && styles.friendDropdownItemSelected
-                              ]}
-                              onPress={() => handleFriendSelect(friend.email)}
-                              activeOpacity={0.7}
-                            >
-                              <View style={styles.friendDropdownItemContent}>
-                                <View style={[styles.friendDropdownAvatar, { backgroundColor: getAvatarColor(friend.name) }]}>
-                                  <Text style={styles.friendDropdownAvatarText}>
-                                    {getInitials(friend.name)}
-                                  </Text>
-                                </View>
-                                <View style={styles.friendDropdownInfo}>
-                                  <Text style={styles.friendDropdownName}>{friend.name || 'Unknown'}</Text>
-                                  <Text style={styles.friendDropdownEmail}>{friend.email}</Text>
-                                </View>
-                                {isSelected && (
-                                  <Ionicons name="checkmark-circle" size={24} color="#0d9488" />
-                                )}
-                              </View>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </ScrollView>
-                    )}
-                  </View>
-                )}
-              </View>
-
-              {/* Selected Friends Chips */}
-              {selectedFriendEmails.length > 0 && (
-                <View style={styles.selectedFriendsContainer}>
-                  <Text style={styles.selectedFriendsLabel}>Selected:</Text>
-                  <View style={styles.selectedFriendsChips}>
-                    {selectedFriendEmails.map((email, index) => {
-                      const friend = friends.find(f => f.email === email);
-                      return (
-                        <View key={email || index} style={styles.friendChip}>
-                          <Text style={styles.friendChipText}>
-                            {friend?.name || email}
-                          </Text>
-                          <TouchableOpacity
-                            onPress={() => handleRemoveSelectedFriend(email)}
-                            style={styles.friendChipRemove}
-                          >
-                            <Ionicons name="close-circle" size={18} color="#6B7280" />
-                          </TouchableOpacity>
-                        </View>
-                      );
-                    })}
-                  </View>
-                </View>
-              )}
-
-              <Text style={styles.inputLabel}>
-                Or enter email addresses (separated by commas)
-              </Text>
-              <TextInput
-                ref={emailInputRef}
-                style={styles.input}
-                placeholder="sarah@email.com, mike@email.com"
-                placeholderTextColor={colors.textLight}
-                value={friendsEmails}
-                onChangeText={setFriendsEmails}
-                multiline={false}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                returnKeyType="done"
-                blurOnSubmit={true}
-                onFocus={() => {
-                  // Scroll to end to show input above keyboard
-                  setTimeout(() => {
-                    scrollViewRef.current?.scrollToEnd({ animated: true });
-                  }, 300);
-                }}
-              />
-              
-              <View style={styles.buttonContainer}>
-                <TouchableOpacity
-                  style={[styles.primaryButton, (isCreating || (friendsEmails.trim().length === 0 && selectedFriendEmails.length === 0)) && styles.buttonDisabled]}
-                  onPress={handleCreateAndShare}
-                  disabled={isCreating || (friendsEmails.trim().length === 0 && selectedFriendEmails.length === 0)}
-                >
-                  {isCreating ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <>
-                      <Ionicons name="share-outline" size={20} color="#fff" style={styles.buttonIcon} />
-                      <Text style={styles.primaryButtonText}>Create & Share Bill</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-                
-                {isFromCamera && (
-                  <TouchableOpacity
-                    style={styles.secondaryButton}
-                    onPress={() => {
-                      console.log('Re-Scan Receipt pressed - navigating to ScanReceipt');
-                      navigation.replace('ScanReceipt');
-                    }}
-                  >
-                    <Ionicons name="camera-outline" size={20} color={colors.primary} style={styles.buttonIcon} />
-                    <Text style={styles.secondaryButtonText}>Re-Scan Receipt</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-          </View>
+          <FriendsInvite
+            friends={friends}
+            friendsEmails={friendsEmails}
+            setFriendsEmails={setFriendsEmails}
+            selectedFriendEmails={selectedFriendEmails}
+            showFriendsDropdown={showFriendsDropdown}
+            setShowFriendsDropdown={setShowFriendsDropdown}
+            isLoadingFriends={isLoadingFriends}
+            isCreating={isCreating}
+            isFromCamera={isFromCamera}
+            onFriendSelect={handleFriendSelect}
+            onRemoveFriend={handleRemoveSelectedFriend}
+            onCreateAndShare={handleCreateAndShare}
+            onReScanReceipt={() => {
+              console.log('Re-Scan Receipt pressed - navigating to ScanReceipt');
+              navigation.replace('ScanReceipt');
+            }}
+            scrollViewRef={scrollViewRef}
+          />
         )}
 
         {/* View Receipt Button */}

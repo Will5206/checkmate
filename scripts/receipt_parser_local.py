@@ -14,8 +14,8 @@ from pillow_heif import register_heif_opener
 
 register_heif_opener()
 
-# Load environment variables from .env.openai_key file
-load_dotenv("openai_key.env")
+# Load environment variables from .env file
+load_dotenv(".env")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:

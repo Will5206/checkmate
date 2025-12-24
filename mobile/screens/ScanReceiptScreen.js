@@ -113,13 +113,20 @@ export default function ScanReceiptScreen() {
         const response = await fetch(imageUri);
         const blob = await response.blob();
         
+        // Get authentication token
+        const token = await AsyncStorage.getItem('authToken');
+        const headers = {
+          'Content-Type': 'image/jpeg',
+        };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        
         // Send image to backend parser
         const parseResponse = await fetch(`${API_BASE_URL}/receipt/parse`, {
           method: 'POST',
           body: blob,
-          headers: {
-            'Content-Type': 'image/jpeg',
-          },
+          headers,
           signal: abortController.signal, // Allow cancellation
         });
 

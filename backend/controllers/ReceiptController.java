@@ -6,6 +6,9 @@ import models.ReceiptItem;
 import database.ReceiptDAO;
 import database.UserDAO;
 import models.User;
+import utils.AuthMiddleware;
+import utils.ValidationUtils;
+import utils.ErrorResponse;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import org.json.JSONArray;
@@ -38,7 +41,7 @@ public class ReceiptController {
 
     private static final ReceiptService receiptService = ReceiptService.getInstance();
     private static final String UPLOAD_DIR = "receipts/";
-    private static final String PYTHON_SCRIPT = "receipt_parser_local.py";
+    private static final String PYTHON_SCRIPT = "scripts/receipt_parser_local.py";
 
     /**
      * Handler for parsing a receipt image using OpenAI.
@@ -49,9 +52,13 @@ public class ReceiptController {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             // Enable CORS
-            exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
+            String allowedOrigin = System.getenv("ALLOWED_ORIGIN");
+            if (allowedOrigin == null || allowedOrigin.isEmpty()) {
+                allowedOrigin = "*";
+            }
+            exchange.getResponseHeaders().add("Access-Control-Allow-Origin", allowedOrigin);
             exchange.getResponseHeaders().add("Access-Control-Allow-Methods", "POST, OPTIONS");
-            exchange.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type");
+            exchange.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type, Authorization");
             
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(200, -1);
@@ -59,7 +66,14 @@ public class ReceiptController {
             }
             
             if (!"POST".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
+                return;
+            }
+            
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
                 return;
             }
             
@@ -75,7 +89,17 @@ public class ReceiptController {
                 System.out.println("[ReceiptController] ✓ Read " + imageData.length + " bytes of image data (" + (imageData.length / 1024) + " KB)");
                 
                 if (imageData.length == 0) {
-                    sendJson(exchange, 400, new JSONObject().put("success", false).put("message", "No image data received"));
+                    ErrorResponse.sendError(exchange, 400, "No image data received");
+                    return;
+                }
+                
+                // Enforce maximum file size (10MB)
+                final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+                if (imageData.length > MAX_FILE_SIZE) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Image file too large. Maximum size is 10MB. Your file is " + 
+                            String.format("%.2f", imageData.length / (1024.0 * 1024.0)) + "MB"));
                     return;
                 }
                 
@@ -303,7 +327,7 @@ public class ReceiptController {
                 return;
             }
             if (!"GET".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
                 return;
             }
             
@@ -404,7 +428,14 @@ public class ReceiptController {
                 return;
             }
             if (!"GET".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
+                return;
+            }
+            
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
                 return;
             }
             
@@ -416,6 +447,14 @@ public class ReceiptController {
                     sendJson(exchange, 400, new JSONObject()
                         .put("success", false)
                         .put("message", "userId parameter is required"));
+                    return;
+                }
+                
+                // Verify authenticated user matches requested user
+                if (!userIdStr.equals(authenticatedUserId)) {
+                    sendJson(exchange, 403, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Forbidden: Cannot list receipts for another user"));
                     return;
                 }
                 
@@ -513,7 +552,14 @@ public class ReceiptController {
                 return;
             }
             if (!"POST".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
+                return;
+            }
+            
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
                 return;
             }
             
@@ -526,6 +572,14 @@ public class ReceiptController {
                     sendJson(exchange, 400, new JSONObject()
                         .put("success", false)
                         .put("message", "userId parameter is required"));
+                    return;
+                }
+                
+                // Verify authenticated user matches
+                if (!userIdStr.equals(authenticatedUserId)) {
+                    sendJson(exchange, 403, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Forbidden: Cannot accept receipts for another user"));
                     return;
                 }
                 
@@ -568,7 +622,14 @@ public class ReceiptController {
                 return;
             }
             if (!"POST".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
+                return;
+            }
+            
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
                 return;
             }
             
@@ -584,22 +645,87 @@ public class ReceiptController {
                     return;
                 }
                 
+                // Verify authenticated user matches
+                if (!userIdStr.equals(authenticatedUserId)) {
+                    sendJson(exchange, 403, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Forbidden: Cannot create receipts for another user"));
+                    return;
+                }
+                
                 // Read request body
                 String requestBody = readRequestBody(exchange);
                 JSONObject json = new JSONObject(requestBody);
                 
-                // Extract receipt data
-                String merchantName = json.optString("restaurant_name", json.optString("merchantName", "Unknown Merchant"));
-                double totalAmount = json.getDouble("total_amount");
-                double tax = json.optDouble("tax", 0.0);
-                double tip = json.optDouble("tip", 0.0);
-                String imageUrl = json.optString("imageUrl", json.optString("image_url", ""));
+                // Extract and validate receipt data
+                String merchantName = ValidationUtils.sanitizeBasic(
+                    json.optString("restaurant_name", json.optString("merchantName", "Unknown Merchant"))
+                );
+                if (merchantName == null || merchantName.length() > 255) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Invalid merchant name"));
+                    return;
+                }
                 
-                // Get items
+                double totalAmount;
+                try {
+                    totalAmount = json.getDouble("total_amount");
+                } catch (Exception e) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Invalid total_amount"));
+                    return;
+                }
+                
+                if (!ValidationUtils.isValidAmount(totalAmount)) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Invalid amount. Must be between 0.01 and 999,999.99"));
+                    return;
+                }
+                
+                double tax = Math.max(0, json.optDouble("tax", 0.0));
+                double tip = Math.max(0, json.optDouble("tip", 0.0));
+                String imageUrl = ValidationUtils.sanitizeBasic(
+                    json.optString("imageUrl", json.optString("image_url", ""))
+                );
+                
+                // Validate and sanitize items
+                if (!json.has("items")) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "items array is required"));
+                    return;
+                }
+                
                 JSONArray itemsArray = json.getJSONArray("items");
+                if (itemsArray.length() == 0) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "At least one item is required"));
+                    return;
+                }
+                
+                if (itemsArray.length() > 100) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Too many items. Maximum is 100"));
+                    return;
+                }
                 
                 // Get participants (email addresses)
-                JSONArray participantsArray = json.getJSONArray("participants");
+                JSONArray participantsArray = json.optJSONArray("participants");
+                if (participantsArray == null) {
+                    participantsArray = new JSONArray();
+                }
+                
+                if (participantsArray.length() > 50) {
+                    sendJson(exchange, 400, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Too many participants. Maximum is 50"));
+                    return;
+                }
                 
                 // Create receipt in database
                 ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
@@ -626,15 +752,62 @@ public class ReceiptController {
                 UserDAO userDAO = new UserDAO();
                 List<String> validParticipantIds = new ArrayList<>();
                 
-                // Prepare items data for batch insert
+                // Prepare items data for batch insert with validation
                 List<Map<String, Object>> itemsData = new ArrayList<>();
                 for (int i = 0; i < itemsArray.length(); i++) {
                     JSONObject itemJson = itemsArray.getJSONObject(i);
+                    
+                    // Validate item name
+                    if (!itemJson.has("name") || itemJson.getString("name").trim().isEmpty()) {
+                        sendJson(exchange, 400, new JSONObject()
+                            .put("success", false)
+                            .put("message", "Item " + (i + 1) + " is missing a name"));
+                        return;
+                    }
+                    
+                    String itemName = ValidationUtils.sanitizeBasic(itemJson.getString("name"));
+                    if (itemName == null || itemName.length() > 255) {
+                        sendJson(exchange, 400, new JSONObject()
+                            .put("success", false)
+                            .put("message", "Item " + (i + 1) + " has an invalid name"));
+                        return;
+                    }
+                    
+                    // Validate item price
+                    double itemPrice;
+                    try {
+                        itemPrice = itemJson.getDouble("price");
+                    } catch (Exception e) {
+                        sendJson(exchange, 400, new JSONObject()
+                            .put("success", false)
+                            .put("message", "Item " + (i + 1) + " has an invalid price"));
+                        return;
+                    }
+                    
+                    if (!ValidationUtils.isValidAmount(itemPrice)) {
+                        sendJson(exchange, 400, new JSONObject()
+                            .put("success", false)
+                            .put("message", "Item " + (i + 1) + " has an invalid price amount"));
+                        return;
+                    }
+                    
+                    // Validate quantity
+                    int quantity = itemJson.optInt("qty", itemJson.optInt("quantity", 1));
+                    if (quantity < 1 || quantity > 100) {
+                        sendJson(exchange, 400, new JSONObject()
+                            .put("success", false)
+                            .put("message", "Item " + (i + 1) + " has an invalid quantity (must be 1-100)"));
+                        return;
+                    }
+                    
                     Map<String, Object> itemData = new HashMap<>();
-                    itemData.put("name", itemJson.getString("name"));
-                    itemData.put("price", itemJson.getDouble("price"));
-                    itemData.put("quantity", itemJson.optInt("qty", itemJson.optInt("quantity", 1)));
-                    itemData.put("category", itemJson.optString("category", null));
+                    itemData.put("name", itemName);
+                    itemData.put("price", itemPrice);
+                    itemData.put("quantity", quantity);
+                    String category = itemJson.optString("category", null);
+                    if (category != null) {
+                        itemData.put("category", ValidationUtils.sanitizeBasic(category));
+                    }
                     itemsData.add(itemData);
                 }
                 
@@ -652,6 +825,15 @@ public class ReceiptController {
                 List<String> participantEmails = new ArrayList<>();
                 for (int i = 0; i < participantsArray.length(); i++) {
                     String email = participantsArray.getString(i).trim().toLowerCase();
+                    
+                    // Validate email format
+                    if (!ValidationUtils.isValidEmail(email)) {
+                        sendJson(exchange, 400, new JSONObject()
+                            .put("success", false)
+                            .put("message", "Invalid email address: " + email));
+                        return;
+                    }
+                    
                     participantEmails.add(email);
                 }
                 
@@ -717,7 +899,7 @@ public class ReceiptController {
                 return;
             }
             if (!"POST".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
                 return;
             }
             
@@ -772,7 +954,14 @@ public class ReceiptController {
                 return;
             }
             if (!"GET".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
+                return;
+            }
+            
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
                 return;
             }
             
@@ -787,6 +976,14 @@ public class ReceiptController {
                     sendJson(exchange, 400, new JSONObject()
                         .put("success", false)
                         .put("message", "userId parameter is required"));
+                    return;
+                }
+                
+                // Verify authenticated user matches
+                if (!userIdStr.equals(authenticatedUserId)) {
+                    sendJson(exchange, 403, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Forbidden: Cannot access activity for another user"));
                     return;
                 }
                 
@@ -943,9 +1140,14 @@ public class ReceiptController {
     }
 
     private static void addCors(HttpExchange exchange) {
-        exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
+        // In production, replace with specific allowed origins from environment variable
+        String allowedOrigin = System.getenv("ALLOWED_ORIGIN");
+        if (allowedOrigin == null || allowedOrigin.isEmpty()) {
+            allowedOrigin = "*"; // Default to wildcard for development
+        }
+        exchange.getResponseHeaders().add("Access-Control-Allow-Origin", allowedOrigin);
         exchange.getResponseHeaders().add("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-        exchange.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type");
+        exchange.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
 
     /**
@@ -977,6 +1179,13 @@ public class ReceiptController {
                 return;
             }
             
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
+                return;
+            }
+            
             Map<String, String> query = parseQuery(exchange.getRequestURI());
             try {
                 String userIdStr = query.getOrDefault("userId", "");
@@ -987,6 +1196,14 @@ public class ReceiptController {
                     sendJson(exchange, 400, new JSONObject()
                         .put("success", false)
                         .put("message", "receiptId, itemId, and userId are required"));
+                    return;
+                }
+                
+                // Verify authenticated user matches
+                if (!userIdStr.equals(authenticatedUserId)) {
+                    sendJson(exchange, 403, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Forbidden: Cannot claim items for another user"));
                     return;
                 }
                 
@@ -1096,7 +1313,14 @@ public class ReceiptController {
                 return;
             }
             if (!"GET".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
+                return;
+            }
+            
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
                 return;
             }
             
@@ -1109,6 +1333,14 @@ public class ReceiptController {
                     sendJson(exchange, 400, new JSONObject()
                         .put("success", false)
                         .put("message", "receiptId and userId are required"));
+                    return;
+                }
+                
+                // Verify authenticated user matches
+                if (!userIdStr.equals(authenticatedUserId)) {
+                    sendJson(exchange, 403, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Forbidden: Cannot access assignments for another user"));
                     return;
                 }
                 
@@ -1186,7 +1418,14 @@ public class ReceiptController {
                 return;
             }
             if (!"POST".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
+                return;
+            }
+            
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
                 return;
             }
             
@@ -1199,6 +1438,14 @@ public class ReceiptController {
                     sendJson(exchange, 400, new JSONObject()
                         .put("success", false)
                         .put("message", "receiptId and userId are required"));
+                    return;
+                }
+                
+                // Verify authenticated user matches
+                if (!userIdStr.equals(authenticatedUserId)) {
+                    sendJson(exchange, 403, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Forbidden: Cannot pay for receipts as another user"));
                     return;
                 }
                 
@@ -1433,7 +1680,14 @@ public class ReceiptController {
                 return;
             }
             if (!"POST".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject().put("success", false).put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
+                return;
+            }
+            
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
                 return;
             }
             
@@ -1446,6 +1700,14 @@ public class ReceiptController {
                     sendJson(exchange, 400, new JSONObject()
                         .put("success", false)
                         .put("message", "receiptId and userId are required"));
+                    return;
+                }
+                
+                // Verify authenticated user matches (only receipt uploader can add participants)
+                if (!userIdStr.equals(authenticatedUserId)) {
+                    sendJson(exchange, 403, new JSONObject()
+                        .put("success", false)
+                        .put("message", "Forbidden: Cannot add participants to receipts for another user"));
                     return;
                 }
                 

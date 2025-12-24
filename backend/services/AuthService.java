@@ -6,8 +6,7 @@ import utils.ValidationUtils;
 
 import java.sql.*;
 import java.util.UUID;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
+import org.mindrot.jbcrypt.BCrypt;
 
 
 
@@ -85,12 +84,11 @@ public class AuthService {
             if (rs.next()) {
                 System.out.println("🟡 [SERVICE STEP 6/8] User found in database");
                 String storedPasswordHash = rs.getString("password_hash");
-                System.out.println("🟡 [SERVICE STEP 7/8] Hashing input password...");
-                String inputPasswordHash = hashPassword(password);
+                System.out.println("🟡 [SERVICE STEP 7/8] Verifying password with BCrypt...");
                 
-                // verify password
+                // verify password using BCrypt
                 System.out.println("🟡 [SERVICE STEP 7/8] Comparing password hashes...");
-                if (storedPasswordHash.equals(inputPasswordHash)) {
+                if (BCrypt.checkpw(password, storedPasswordHash)) {
                     System.out.println("🟡 [SERVICE STEP 7/8] Password matches!");
                     // creat User object
                     System.out.println("🟡 [SERVICE STEP 8/8] Creating User object...");
@@ -163,7 +161,8 @@ public class AuthService {
             // create new user
 
             String userId = UUID.randomUUID().toString();
-            String passwordHash = hashPassword(password);
+            // Hash password with BCrypt (cost factor 12 for good security/performance balance)
+            String passwordHash = BCrypt.hashpw(password, BCrypt.gensalt(12));
             
             String insertSql = "INSERT INTO users (user_id, name, email, phone_number, password_hash, balance) " +
                              "VALUES (?, ?, ?, ?, ?, 0.00)";
@@ -258,32 +257,35 @@ public class AuthService {
         }
     }
 
-
-
-    
     /**
-     * hash password using SHA-256
-     * in production---- use bcrypt or similar
+     * Verify session token and return user ID if valid
+     * @param token Session token
+     * @return User ID if token is valid, null otherwise
      */
-    private String hashPassword(String password) {
+    public String verifyToken(String token) {
+        if (token == null || token.trim().isEmpty()) {
+            return null;
+        }
+        
         try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(password.getBytes());
+            Connection conn = dbConnection.getConnection();
+            String sql = "SELECT user_id FROM sessions WHERE token = ? AND expires_at > NOW()";
             
-            StringBuilder hexString = new StringBuilder();
-            for (byte b : hash) {
-                String hex = Integer.toHexString(0xff & b);
-                if (hex.length() == 1) hexString.append('0');
-                hexString.append(hex);
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setString(1, token);
+                stmt.setQueryTimeout(5);
+                
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        return rs.getString("user_id");
+                    }
+                }
             }
             
-
-
-
-            return hexString.toString();
-            
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("Error hashing password", e);
+            return null;
+        } catch (SQLException e) {
+            System.err.println("Error verifying token: " + e.getMessage());
+            return null;
         }
     }
 }

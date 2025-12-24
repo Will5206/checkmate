@@ -2,6 +2,20 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '../config';
 
 /**
+ * Get authentication headers with token
+ */
+const getAuthHeaders = async () => {
+  const token = await AsyncStorage.getItem('authToken');
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+};
+
+/**
  * Create a new receipt and share it with participants
  * @param {Object} receiptData - Receipt data object
  * @param {string} receiptData.restaurant_name - Name of the restaurant/merchant
@@ -27,12 +41,11 @@ export async function createReceipt(receiptData) {
     }
 
     const url = `${API_BASE_URL}/receipts/create?userId=${encodeURIComponent(userId)}`;
+    const headers = await getAuthHeaders();
     
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(receiptData),
       signal: controller.signal,
     });
@@ -87,13 +100,12 @@ export async function getPendingReceipts() {
       };
     }
 
+    const headers = await getAuthHeaders();
     const response = await fetch(
       `${API_BASE_URL}/receipts/pending?userId=${encodeURIComponent(userId)}`,
       {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         signal: controller.signal,
       }
     );
@@ -149,13 +161,12 @@ export async function acceptReceipt(receiptId) {
       };
     }
 
+    const headers = await getAuthHeaders();
     const response = await fetch(
       `${API_BASE_URL}/receipts/accept?receiptId=${receiptId}&userId=${encodeURIComponent(userId)}`,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         signal: controller.signal,
       }
     );
@@ -211,13 +222,12 @@ export async function declineReceipt(receiptId) {
       };
     }
 
+    const headers = await getAuthHeaders();
     const response = await fetch(
       `${API_BASE_URL}/receipts/decline?receiptId=${receiptId}&userId=${encodeURIComponent(userId)}`,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         signal: controller.signal,
       }
     );
@@ -279,11 +289,10 @@ export async function getActivityReceipts() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
     
+    const headers = await getAuthHeaders();
     const response = await fetch(url, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       signal: controller.signal,
     });
 
@@ -344,13 +353,12 @@ export async function getReceiptDetails(receiptId) {
       };
     }
 
+    const headers = await getAuthHeaders();
     const response = await fetch(
       `${API_BASE_URL}/receipts/view?receiptId=${receiptId}&userId=${encodeURIComponent(userId)}`,
       {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         signal: controller.signal,
       }
     );
@@ -408,13 +416,12 @@ export async function claimItem(receiptId, itemId, quantity = 1) {
       };
     }
 
+    const headers = await getAuthHeaders();
     const response = await fetch(
       `${API_BASE_URL}/receipts/items/claim?receiptId=${receiptId}&itemId=${itemId}&userId=${encodeURIComponent(userId)}&quantity=${quantity}`,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         signal: controller.signal,
       }
     );
@@ -471,13 +478,12 @@ export async function unclaimItem(receiptId, itemId) {
       };
     }
 
+    const headers = await getAuthHeaders();
     const response = await fetch(
       `${API_BASE_URL}/receipts/items/claim?receiptId=${receiptId}&itemId=${itemId}&userId=${encodeURIComponent(userId)}`,
       {
         method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         signal: controller.signal,
       }
     );
@@ -536,11 +542,10 @@ export async function getItemAssignments(receiptId) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
     
+    const headers = await getAuthHeaders();
     const response = await fetch(url, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       signal: controller.signal,
     });
 
@@ -606,13 +611,12 @@ export async function addParticipantsToReceipt(receiptId, participantEmails) {
       };
     }
 
+    const headers = await getAuthHeaders();
     const response = await fetch(
       `${API_BASE_URL}/receipts/add-participants?receiptId=${receiptId}&userId=${encodeURIComponent(userId)}`,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({
           participants: participantEmails,
         }),
@@ -671,13 +675,12 @@ export async function payReceipt(receiptId) {
       };
     }
 
+    const headers = await getAuthHeaders();
     const response = await fetch(
       `${API_BASE_URL}/receipts/pay?receiptId=${receiptId}&userId=${encodeURIComponent(userId)}`,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         signal: controller.signal,
       }
     );

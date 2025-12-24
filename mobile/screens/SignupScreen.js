@@ -60,6 +60,7 @@ export default function SignupScreen({ navigation }) {
       return;
     }
 
+    // Basic client-side validation - backend will provide detailed error messages
     if (password.length < 8) {
       setError('Password must be at least 8 characters');
       return;
@@ -187,7 +188,9 @@ export default function SignupScreen({ navigation }) {
                     secureTextEntry
                     editable={!loading}
                   />
-                  <Text style={styles.hint}>Must be at least 8 characters</Text>
+                  <Text style={styles.hint}>
+                    Must be at least 8 characters with uppercase, lowercase, and a number
+                  </Text>
                 </View>
 
                 <View style={styles.inputWrapper}>

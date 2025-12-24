@@ -2,6 +2,20 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '../config';
 
 /**
+ * Get authentication headers with token
+ */
+const getAuthHeaders = async () => {
+  const token = await AsyncStorage.getItem('authToken');
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+};
+
+/**
  * Add friend by email
  * @param {string} email - Friend's email address
  * @returns {Promise<Object>} Response with success status and friend data
@@ -25,11 +39,10 @@ export async function addFriendByEmail(email) {
     const url = `${API_BASE_URL}/friends/add-by-email?userId=${userId}&email=${encodeURIComponent(email)}`;
     console.log('Making request to:', url);
 
+    const headers = await getAuthHeaders();
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       signal: controller.signal,
     });
 
@@ -85,13 +98,12 @@ export async function getFriendsList() {
       };
     }
 
+    const headers = await getAuthHeaders();
     const response = await fetch(
       `${API_BASE_URL}/friends/list?userId=${userId}`,
       {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         signal: controller.signal,
       }
     );
@@ -146,13 +158,12 @@ export async function getPendingFriendRequests() {
       };
     }
 
+    const headers = await getAuthHeaders();
     const response = await fetch(
       `${API_BASE_URL}/friends/pending?userId=${userId}`,
       {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         signal: controller.signal,
       }
     );
@@ -208,13 +219,12 @@ export async function acceptFriendRequest(friendId) {
       };
     }
 
+    const headers = await getAuthHeaders();
     const response = await fetch(
       `${API_BASE_URL}/friends/accept?userId=${userId}&friendId=${encodeURIComponent(friendId)}`,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         signal: controller.signal,
       }
     );
@@ -270,13 +280,12 @@ export async function declineFriendRequest(friendId) {
       };
     }
 
+    const headers = await getAuthHeaders();
     const response = await fetch(
       `${API_BASE_URL}/friends/decline?userId=${userId}&friendId=${encodeURIComponent(friendId)}`,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         signal: controller.signal,
       }
     );
@@ -337,13 +346,12 @@ export async function removeFriend(friendId) {
     const url = `${API_BASE_URL}/friends/remove?userId=${userId}&friendId=${friendId}`;
     console.log('🔴 [3/8] Making remove friend request to:', url);
 
+    const headers = await getAuthHeaders();
     const response = await fetch(
       url,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         signal: controller.signal,
       }
     );

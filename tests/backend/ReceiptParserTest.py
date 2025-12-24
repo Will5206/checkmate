@@ -4,7 +4,7 @@ import sys
 import os
 
 # Add scripts directory to path so we can import receipt_parser
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'scripts'))
 import receipt_parser_local as rp
 
 class TestReceiptParser(unittest.TestCase):

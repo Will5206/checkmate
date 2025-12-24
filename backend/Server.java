@@ -4,11 +4,15 @@ import controllers.AuthController;
 import controllers.BalanceController;
 import controllers.FriendController;
 import controllers.ReceiptController;
+import controllers.HealthController;
 import database.DatabaseConnection;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.util.Enumeration;
 
 
 
@@ -65,6 +69,12 @@ public class Server {
             
             // register endpoints
             System.out.println("🟣 [SERVER INIT] Registering endpoints...");
+            
+            // Health check endpoint (public, no auth required)
+            server.createContext("/health", new HealthController.HealthCheckHandler());
+            System.out.println("🟣 [SERVER INIT] Registered: /health");
+            
+            // Auth endpoints (public)
             server.createContext("/api/auth/login", new AuthController.LoginHandler());
             System.out.println("🟣 [SERVER INIT] Registered: /api/auth/login");
             server.createContext("/api/auth/signup", new AuthController.SignupHandler());
@@ -96,6 +106,32 @@ public class Server {
             server.start();
             System.out.println("🟣 [SERVER INIT] Server started successfully");
 
+            // Detect and display local IP addresses
+            System.out.println("🟣 [SERVER INIT] Detecting local IP addresses...");
+            try {
+                Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+                while (interfaces.hasMoreElements()) {
+                    NetworkInterface iface = interfaces.nextElement();
+                    if (iface.isLoopback() || !iface.isUp()) {
+                        continue;
+                    }
+                    Enumeration<InetAddress> addresses = iface.getInetAddresses();
+                    while (addresses.hasMoreElements()) {
+                        InetAddress addr = addresses.nextElement();
+                        if (addr.isLoopbackAddress()) {
+                            continue;
+                        }
+                        if (addr.getHostAddress().contains(":")) {
+                            // Skip IPv6
+                            continue;
+                        }
+                        System.out.println("🟣 [SERVER INIT] Found network interface: " + iface.getName() + " -> " + addr.getHostAddress());
+                    }
+                }
+            } catch (Exception e) {
+                System.out.println("🟣 [SERVER INIT] Could not detect local IP addresses: " + e.getMessage());
+            }
+            
             System.out.println("═══════════════════════════════════════════════════════════");
             System.out.println("CheckMate Server started on port " + PORT);
             System.out.println("═══════════════════════════════════════════════════════════");

@@ -29,8 +29,11 @@ const getLocalIP = () => {
 
   // Use your computer's IP for physical device testing
   // Change this to localhost if testing on web/simulator
-  // Updated IP: 192.168.0.210 (check with: ifconfig | grep "inet " | grep -v "127.0.0.1")
-  return 'http://192.168.0.210:8080/api';
+  // Updated IP: 192.168.1.155 (check with: ifconfig | grep "inet " | grep -v "127.0.0.1")
+  return 'http://192.168.1.155:8080/api';
 };
 
 export const API_BASE_URL = getLocalIP();
+
+// Log the API URL on import (for debugging)
+console.log('🔵 [FRONTEND CONFIG] API_BASE_URL:', API_BASE_URL);

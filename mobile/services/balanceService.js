@@ -1,4 +1,19 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '../config';
+
+/**
+ * Get authentication headers with token
+ */
+const getAuthHeaders = async () => {
+  const token = await AsyncStorage.getItem('authToken');
+  const headers = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+};
 
 /**
  * Fetch the current balance for a user
@@ -10,11 +25,10 @@ export const getUserBalance = async (userId) => {
   const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
   
   try {
+    const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE_URL}/balance?userId=${userId}`, {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       signal: controller.signal,
     });
 
@@ -55,11 +69,10 @@ export const addMoney = async (userId, amount) => {
   const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
   
   try {
+    const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE_URL}/balance/add?userId=${encodeURIComponent(userId)}&amount=${amount}`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       signal: controller.signal,
     });
 
@@ -105,11 +118,10 @@ export const cashOut = async (userId, amount) => {
   const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
   
   try {
+    const headers = await getAuthHeaders();
     const response = await fetch(`${API_BASE_URL}/balance/cashout?userId=${encodeURIComponent(userId)}&amount=${amount}`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       signal: controller.signal,
     });
 

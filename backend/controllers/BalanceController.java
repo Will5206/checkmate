@@ -3,6 +3,8 @@ package controllers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import services.BalanceService;
+import utils.AuthMiddleware;
+import utils.ErrorResponse;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -24,8 +26,22 @@ public class BalanceController {
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            // Add CORS headers
+            addCors(exchange);
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(200, -1);
+                return;
+            }
+            
             if (!"GET".equals(exchange.getRequestMethod())) {
-                sendResponse(exchange, 405, "{\"error\": \"Method not allowed\"}");
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
+                return;
+            }
+
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
                 return;
             }
 
@@ -37,7 +53,13 @@ public class BalanceController {
                 String userId = params.get("userId");
 
                 if (userId == null || userId.trim().isEmpty()) {
-                    sendResponse(exchange, 400, "{\"error\": \"userId parameter is required\"}");
+                    ErrorResponse.sendError(exchange, 400, "userId parameter is required");
+                    return;
+                }
+                
+                // Verify user can only access their own balance
+                if (!userId.equals(authenticatedUserId)) {
+                    ErrorResponse.sendError(exchange, 403, "Forbidden: Cannot access another user's balance");
                     return;
                 }
 
@@ -51,7 +73,7 @@ public class BalanceController {
             } catch (Exception e) {
                 System.err.println("Error getting balance: " + e.getMessage());
                 e.printStackTrace();
-                sendResponse(exchange, 500, "{\"error\": \"Internal server error\"}");
+                ErrorResponse.sendError(exchange, 500, "Internal server error");
             }
         }
 
@@ -70,12 +92,23 @@ public class BalanceController {
         }
 
         private void sendResponse(HttpExchange exchange, int statusCode, String response) throws IOException {
+            addCors(exchange);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
-            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
             exchange.sendResponseHeaders(statusCode, response.getBytes().length);
             OutputStream os = exchange.getResponseBody();
             os.write(response.getBytes());
             os.close();
+        }
+        
+        private void addCors(HttpExchange exchange) {
+            // In production, replace with specific allowed origins
+            String allowedOrigin = System.getenv("ALLOWED_ORIGIN");
+            if (allowedOrigin == null || allowedOrigin.isEmpty()) {
+                allowedOrigin = "*"; // Default to wildcard for development
+            }
+            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", allowedOrigin);
+            exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+            exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization");
         }
     }
 
@@ -88,16 +121,21 @@ public class BalanceController {
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            addCors(exchange);
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
-                exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "POST, OPTIONS");
-                exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
                 exchange.sendResponseHeaders(200, -1);
                 return;
             }
 
             if (!"POST".equals(exchange.getRequestMethod())) {
-                sendResponse(exchange, 405, "{\"success\": false, \"error\": \"Method not allowed\"}");
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
+                return;
+            }
+
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
                 return;
             }
 
@@ -109,13 +147,19 @@ public class BalanceController {
                 String amountStr = params.get("amount");
 
                 if (userId == null || userId.trim().isEmpty() || amountStr == null || amountStr.trim().isEmpty()) {
-                    sendResponse(exchange, 400, "{\"success\": false, \"error\": \"userId and amount parameters are required\"}");
+                    ErrorResponse.sendError(exchange, 400, "userId and amount parameters are required");
+                    return;
+                }
+                
+                // Verify user can only modify their own balance
+                if (!userId.equals(authenticatedUserId)) {
+                    ErrorResponse.sendError(exchange, 403, "Forbidden: Cannot modify another user's balance");
                     return;
                 }
 
                 double amount = Double.parseDouble(amountStr);
                 if (amount <= 0) {
-                    sendResponse(exchange, 400, "{\"success\": false, \"error\": \"Amount must be positive\"}");
+                    ErrorResponse.sendError(exchange, 400, "Amount must be positive");
                     return;
                 }
 
@@ -135,15 +179,15 @@ public class BalanceController {
                         newBalance, amount);
                     sendResponse(exchange, 200, jsonResponse);
                 } else {
-                    sendResponse(exchange, 500, "{\"success\": false, \"error\": \"Failed to add money\"}");
+                    ErrorResponse.sendError(exchange, 500, "Failed to add money");
                 }
 
             } catch (NumberFormatException e) {
-                sendResponse(exchange, 400, "{\"success\": false, \"error\": \"Invalid amount format\"}");
+                ErrorResponse.sendError(exchange, 400, "Invalid amount format");
             } catch (Exception e) {
                 System.err.println("Error adding money: " + e.getMessage());
                 e.printStackTrace();
-                sendResponse(exchange, 500, "{\"success\": false, \"error\": \"Internal server error\"}");
+                ErrorResponse.sendError(exchange, 500, "Internal server error");
             }
         }
 
@@ -184,16 +228,21 @@ public class BalanceController {
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            addCors(exchange);
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
-                exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "POST, OPTIONS");
-                exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
                 exchange.sendResponseHeaders(200, -1);
                 return;
             }
 
             if (!"POST".equals(exchange.getRequestMethod())) {
-                sendResponse(exchange, 405, "{\"success\": false, \"error\": \"Method not allowed\"}");
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
+                return;
+            }
+
+            // Verify authentication
+            String authenticatedUserId = AuthMiddleware.verifyAuth(exchange);
+            if (authenticatedUserId == null) {
+                AuthMiddleware.sendUnauthorized(exchange);
                 return;
             }
 
@@ -205,22 +254,28 @@ public class BalanceController {
                 String amountStr = params.get("amount");
 
                 if (userId == null || userId.trim().isEmpty() || amountStr == null || amountStr.trim().isEmpty()) {
-                    sendResponse(exchange, 400, "{\"success\": false, \"error\": \"userId and amount parameters are required\"}");
+                    ErrorResponse.sendError(exchange, 400, "userId and amount parameters are required");
+                    return;
+                }
+                
+                // Verify user can only modify their own balance
+                if (!userId.equals(authenticatedUserId)) {
+                    ErrorResponse.sendError(exchange, 403, "Forbidden: Cannot modify another user's balance");
                     return;
                 }
 
                 double amount = Double.parseDouble(amountStr);
                 if (amount <= 0) {
-                    sendResponse(exchange, 400, "{\"success\": false, \"error\": \"Amount must be positive\"}");
+                    ErrorResponse.sendError(exchange, 400, "Amount must be positive");
                     return;
                 }
 
                 // Check balance first
                 double currentBalance = balanceService.getCurrentBalance(userId);
                 if (currentBalance < amount) {
-                    String jsonResponse = String.format("{\"success\": false, \"error\": \"Insufficient balance. You have $%.2f, trying to cash out $%.2f\"}", 
-                        currentBalance, amount);
-                    sendResponse(exchange, 400, jsonResponse);
+                    ErrorResponse.sendError(exchange, 400, 
+                        String.format("Insufficient balance. You have $%.2f, trying to cash out $%.2f", 
+                        currentBalance, amount));
                     return;
                 }
 
@@ -240,15 +295,15 @@ public class BalanceController {
                         newBalance, amount);
                     sendResponse(exchange, 200, jsonResponse);
                 } else {
-                    sendResponse(exchange, 500, "{\"success\": false, \"error\": \"Failed to cash out\"}");
+                    ErrorResponse.sendError(exchange, 500, "Failed to cash out");
                 }
 
             } catch (IllegalArgumentException e) {
-                sendResponse(exchange, 400, String.format("{\"success\": false, \"error\": \"%s\"}", e.getMessage()));
+                ErrorResponse.sendError(exchange, 400, e.getMessage());
             } catch (Exception e) {
                 System.err.println("Error cashing out: " + e.getMessage());
                 e.printStackTrace();
-                sendResponse(exchange, 500, "{\"success\": false, \"error\": \"Internal server error\"}");
+                ErrorResponse.sendError(exchange, 500, "Internal server error");
             }
         }
 
@@ -271,12 +326,35 @@ public class BalanceController {
         }
 
         private void sendResponse(HttpExchange exchange, int statusCode, String response) throws IOException {
+            addCors(exchange);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
-            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
             exchange.sendResponseHeaders(statusCode, response.getBytes().length);
             OutputStream os = exchange.getResponseBody();
             os.write(response.getBytes());
             os.close();
         }
+        
+        private void addCors(HttpExchange exchange) {
+            // In production, replace with specific allowed origins
+            String allowedOrigin = System.getenv("ALLOWED_ORIGIN");
+            if (allowedOrigin == null || allowedOrigin.isEmpty()) {
+                allowedOrigin = "*"; // Default to wildcard for development
+            }
+            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", allowedOrigin);
+            exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+            exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        }
+    }
+    
+    // Shared CORS helper
+    private static void addCors(HttpExchange exchange) {
+        // In production, replace with specific allowed origins
+        String allowedOrigin = System.getenv("ALLOWED_ORIGIN");
+        if (allowedOrigin == null || allowedOrigin.isEmpty()) {
+            allowedOrigin = "*"; // Default to wildcard for development
+        }
+        exchange.getResponseHeaders().set("Access-Control-Allow-Origin", allowedOrigin);
+        exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization");
     }
 }
