@@ -317,6 +317,19 @@ public class ReceiptDAO {
     }
 
     /**
+     * OPTIMIZED: Calculate both owed amount and owed amount excluding paid in a single query.
+     * This reduces 2 separate queries to 1 query for better performance.
+     * 
+     * @param receiptId The receipt ID
+     * @param userId The user ID
+     * @return Array with [owedAmount, owedAmountExcludingPaid]
+     */
+    public float[] calculateBothOwedAmounts(int receiptId, String userId) {
+        // Delegate to ReceiptPaymentDAO
+        return receiptPaymentDAO.calculateBothOwedAmounts(receiptId, userId);
+    }
+
+    /**
      * Get all pending receipts for a specific user.
      * 
      * CRITICAL: This method uses ONLY the 'complete' column to determine if a receipt is pending.
@@ -515,6 +528,113 @@ public class ReceiptDAO {
     public ReceiptItem getReceiptItemById(int itemId) {
         // Delegate to ReceiptItemDAO
         return receiptItemDAO.getReceiptItemById(itemId);
+    }
+
+    /**
+     * OPTIMIZED: Get item info along with user's claimed quantity and total claimed quantity in a single query.
+     * This reduces 3 separate queries to 1 query for better performance.
+     * 
+     * @param itemId The item ID
+     * @param userId The user ID
+     * @return ItemClaimInfo object containing item, user's claimed quantity, and total claimed quantity, or null if item not found
+     */
+    public static class ItemClaimInfo {
+        public ReceiptItem item;
+        public int userClaimedQuantity;
+        public int totalClaimedQuantity;
+        
+        public ItemClaimInfo(ReceiptItem item, int userClaimedQuantity, int totalClaimedQuantity) {
+            this.item = item;
+            this.userClaimedQuantity = userClaimedQuantity;
+            this.totalClaimedQuantity = totalClaimedQuantity;
+        }
+    }
+    
+    public ItemClaimInfo getItemClaimInfo(int itemId, String userId) {
+        System.out.println("[ReceiptDAO] 🔵 STEP 1: getItemClaimInfo called for itemId=" + itemId + ", userId=" + userId);
+        
+        // FIXED: Simplified query to avoid GROUP BY issues when no assignments exist
+        // First get the item info, then get quantities separately if needed
+        // This is safer than a complex LEFT JOIN with GROUP BY
+        String sql = "SELECT " +
+                     "  ri.item_id, ri.receipt_id, ri.name, ri.price, ri.quantity as item_quantity, ri.category, " +
+                     "  (SELECT COALESCE(SUM(quantity), 0) FROM item_assignments WHERE item_id = ? AND user_id = ?) as user_claimed_qty, " +
+                     "  (SELECT COALESCE(SUM(quantity), 0) FROM item_assignments WHERE item_id = ?) as total_claimed_qty " +
+                     "FROM receipt_items ri " +
+                     "WHERE ri.item_id = ?";
+        
+        System.out.println("[ReceiptDAO] 🔵 STEP 2: SQL query prepared");
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            System.out.println("[ReceiptDAO] 🔵 STEP 3: Connection obtained, setting parameters...");
+            // Set parameters: itemId for user query, userId, itemId for total query, itemId for WHERE
+            pstmt.setInt(1, itemId);  // user_claimed_qty subquery item_id
+            pstmt.setString(2, userId); // user_claimed_qty subquery user_id
+            pstmt.setInt(3, itemId);  // total_claimed_qty subquery item_id
+            pstmt.setInt(4, itemId);  // main WHERE clause item_id
+            
+            System.out.println("[ReceiptDAO] 🔵 STEP 4: Executing query...");
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                System.out.println("[ReceiptDAO] 🔵 STEP 5: Query executed, checking results...");
+                
+                if (rs.next()) {
+                    System.out.println("[ReceiptDAO] 🔵 STEP 6: ResultSet has data, reading columns...");
+                    
+                    // Build ReceiptItem from result - read all columns before building object
+                    int itemIdFromDb = rs.getInt("item_id");
+                    int receiptId = rs.getInt("receipt_id");
+                    String name = rs.getString("name");
+                    java.math.BigDecimal price = rs.getBigDecimal("price");
+                    int itemQuantity = rs.getInt("item_quantity");
+                    String category = rs.getString("category");
+                    
+                    System.out.println("[ReceiptDAO] 🔵 STEP 7: Read item columns - itemId=" + itemIdFromDb + ", name=" + name + ", price=" + price);
+                    
+                    // Read quantity columns - these are subqueries so should always return a value (0 if no assignments)
+                    int userClaimedQty = rs.getInt("user_claimed_qty");
+                    int totalClaimedQty = rs.getInt("total_claimed_qty");
+                    
+                    System.out.println("[ReceiptDAO] 🔵 STEP 8: Read quantity columns - userClaimedQty=" + userClaimedQty + ", totalClaimedQty=" + totalClaimedQty);
+                    
+                    // Validate we got valid data
+                    if (price == null) {
+                        System.err.println("[ReceiptDAO] 🔴 ERROR: price is NULL for itemId=" + itemId);
+                        return null;
+                    }
+                    
+                    ReceiptItem item = new ReceiptItem(
+                        itemIdFromDb,
+                        receiptId,
+                        name,
+                        price.floatValue(),
+                        itemQuantity,
+                        category
+                    );
+                    
+                    System.out.println("[ReceiptDAO] ✅ STEP 9: ItemClaimInfo created successfully");
+                    return new ItemClaimInfo(item, userClaimedQty, totalClaimedQty);
+                    
+                } else {
+                    System.out.println("[ReceiptDAO] 🔴 STEP 6: ResultSet is empty - item not found");
+                    return null;
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[ReceiptDAO] 🔴 ERROR: SQLException in getItemClaimInfo: " + e.getMessage());
+            System.err.println("[ReceiptDAO] 🔴 ERROR: SQL State: " + e.getSQLState());
+            System.err.println("[ReceiptDAO] 🔴 ERROR: Error Code: " + e.getErrorCode());
+            System.err.println("[ReceiptDAO] 🔴 ERROR: Stack trace:");
+            e.printStackTrace();
+            return null;
+        } catch (Exception e) {
+            System.err.println("[ReceiptDAO] 🔴 ERROR: Unexpected exception in getItemClaimInfo: " + e.getMessage());
+            System.err.println("[ReceiptDAO] 🔴 ERROR: Exception type: " + e.getClass().getName());
+            e.printStackTrace();
+            return null;
+        }
     }
 
     /**

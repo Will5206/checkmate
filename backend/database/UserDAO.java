@@ -145,4 +145,63 @@ public class UserDAO {
         
         return usersMap;
     }
+    
+    /**
+     * OPTIMIZED: Batch find users by user IDs in a single database query.
+     * This is much faster than looking up users one by one.
+     * 
+     * @param userIds List of user IDs to lookup
+     * @return Map of user_id -> User object for found users
+     */
+    public Map<String, User> findUsersByIdsBatch(List<String> userIds) {
+        Map<String, User> usersMap = new HashMap<>();
+        
+        if (userIds == null || userIds.isEmpty()) {
+            return usersMap;
+        }
+        
+        // Build SQL with IN clause for batch lookup
+        StringBuilder sqlBuilder = new StringBuilder("SELECT * FROM users WHERE user_id IN (");
+        for (int i = 0; i < userIds.size(); i++) {
+            if (i > 0) sqlBuilder.append(", ");
+            sqlBuilder.append("?");
+        }
+        sqlBuilder.append(")");
+        
+        String sql = sqlBuilder.toString();
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            // Set all user ID parameters
+            for (int i = 0; i < userIds.size(); i++) {
+                pstmt.setString(i + 1, userIds.get(i));
+            }
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                while (rs.next()) {
+                    User user = new User(
+                        rs.getString("user_id"),
+                        rs.getString("name"),
+                        rs.getString("email"),
+                        rs.getString("phone_number"),
+                        rs.getString("password_hash"),
+                        rs.getDouble("balance"),
+                        rs.getTimestamp("created_at"),
+                        rs.getTimestamp("updated_at")
+                    );
+                    // Use user_id as key for easy lookup
+                    usersMap.put(user.getUserId(), user);
+                }
+            }
+            
+            System.out.println("[UserDAO] Batch found " + usersMap.size() + " users for " + userIds.size() + " user IDs");
+            
+        } catch (SQLException e) {
+            System.err.println("Error batch finding users by IDs: " + e.getMessage());
+            e.printStackTrace();
+        }
+        
+        return usersMap;
+    }
 }

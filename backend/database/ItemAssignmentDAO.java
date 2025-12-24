@@ -99,12 +99,19 @@ public class ItemAssignmentDAO {
      * @return true if assignment was successful, false otherwise
      */
     public boolean assignItemToUser(int itemId, String userId, int quantity, Consumer<Integer> onSuccess) {
+        long startTime = System.currentTimeMillis();
+        System.out.println("[ItemAssignmentDAO] 🔵 STEP 1: assignItemToUser called - itemId=" + itemId + ", userId=" + userId + ", quantity=" + quantity);
+        
         Connection conn = null;
         try {
+            long connStart = System.currentTimeMillis();
             conn = dbConnection.getConnection();
+            System.out.println("[ItemAssignmentDAO] 🔵 STEP 2: Connection obtained (took " + (System.currentTimeMillis() - connStart) + "ms)");
+            
             conn.setAutoCommit(false);
             
             // Lock the item row to prevent race conditions
+            long lockStart = System.currentTimeMillis();
             String getItemSql = "SELECT receipt_id, quantity as item_quantity " +
                                "FROM receipt_items " +
                                "WHERE item_id = ? FOR UPDATE";
@@ -119,18 +126,23 @@ public class ItemAssignmentDAO {
                         receiptId = rs.getInt("receipt_id");
                         itemQuantity = rs.getInt("item_quantity");
                     } else {
-                        System.err.println("Item not found: " + itemId);
+                        System.err.println("[ItemAssignmentDAO] 🔴 ERROR: Item not found: " + itemId);
                         conn.rollback();
                         return false;
                     }
                 }
             }
+            System.out.println("[ItemAssignmentDAO] 🔵 STEP 3: SELECT FOR UPDATE completed (took " + (System.currentTimeMillis() - lockStart) + "ms) - receiptId=" + receiptId + ", itemQuantity=" + itemQuantity);
             
             // Get current user's claimed quantity
+            long qtyStart = System.currentTimeMillis();
             int userCurrentQty = getUserClaimedQuantityInTransaction(conn, itemId, userId);
+            System.out.println("[ItemAssignmentDAO] 🔵 STEP 4: getUserClaimedQuantityInTransaction took " + (System.currentTimeMillis() - qtyStart) + "ms - userCurrentQty=" + userCurrentQty);
             
             // Get total claimed quantity by all users
+            long totalStart = System.currentTimeMillis();
             int totalClaimed = getTotalClaimedQuantityInTransaction(conn, itemId);
+            System.out.println("[ItemAssignmentDAO] 🔵 STEP 5: getTotalClaimedQuantityInTransaction took " + (System.currentTimeMillis() - totalStart) + "ms - totalClaimed=" + totalClaimed);
             
             // Calculate total claimed by others (excluding this user's current claim)
             int totalClaimedByOthers = totalClaimed - userCurrentQty;
@@ -147,6 +159,7 @@ public class ItemAssignmentDAO {
             }
             
             // Insert or update assignment
+            long insertStart = System.currentTimeMillis();
             String sql = "INSERT INTO item_assignments (receipt_id, item_id, user_id, quantity) " +
                          "VALUES (?, ?, ?, ?) " +
                          "ON DUPLICATE KEY UPDATE quantity = ?";
@@ -159,17 +172,24 @@ public class ItemAssignmentDAO {
                 pstmt.setInt(5, quantity);
                 
                 int affectedRows = pstmt.executeUpdate();
+                System.out.println("[ItemAssignmentDAO] 🔵 STEP 6: INSERT/UPDATE took " + (System.currentTimeMillis() - insertStart) + "ms - affectedRows=" + affectedRows);
+                
                 if (affectedRows > 0) {
+                    long commitStart = System.currentTimeMillis();
                     conn.commit();
+                    System.out.println("[ItemAssignmentDAO] 🔵 STEP 7: COMMIT took " + (System.currentTimeMillis() - commitStart) + "ms");
                     
                     // Execute callback if provided
                     if (onSuccess != null) {
                         onSuccess.accept(receiptId);
                     }
                     
+                    long totalDuration = System.currentTimeMillis() - startTime;
+                    System.out.println("[ItemAssignmentDAO] ✅ STEP 8: assignItemToUser completed successfully (total time: " + totalDuration + "ms)");
                     return true;
                 } else {
                     conn.rollback();
+                    System.err.println("[ItemAssignmentDAO] 🔴 ERROR: No rows affected by INSERT/UPDATE");
                     return false;
                 }
             }

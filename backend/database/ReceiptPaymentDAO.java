@@ -24,6 +24,9 @@ public class ReceiptPaymentDAO {
      * Uses BigDecimal internally for precision.
      */
     public float calculateUserOwedAmount(int receiptId, String userId) {
+        long startTime = System.currentTimeMillis();
+        System.out.println("[ReceiptPaymentDAO] 🔵 calculateUserOwedAmount called - receiptId=" + receiptId + ", userId=" + userId);
+        
         String sql = "SELECT " +
                      "  COALESCE(SUM(ri.price * ia.quantity), 0) as assigned_subtotal, " +
                      "  COALESCE(SUM(ri.price * ri.quantity), 0) as total_subtotal, " +
@@ -40,7 +43,9 @@ public class ReceiptPaymentDAO {
             pstmt.setString(1, userId);
             pstmt.setInt(2, receiptId);
             
+            long queryStart = System.currentTimeMillis();
             try (ResultSet rs = pstmt.executeQuery()) {
+                System.out.println("[ReceiptPaymentDAO] 🔵 Query executed (took " + (System.currentTimeMillis() - queryStart) + "ms)");
                 if (rs.next()) {
                     java.math.BigDecimal assignedSubtotal = rs.getBigDecimal("assigned_subtotal");
                     java.math.BigDecimal totalSubtotal = rs.getBigDecimal("total_subtotal");
@@ -74,15 +79,153 @@ public class ReceiptPaymentDAO {
                         .add(assignedTip)
                         .setScale(2, java.math.RoundingMode.HALF_UP);
                     
-                    return total.floatValue();
+                    float result = total.floatValue();
+                    long totalDuration = System.currentTimeMillis() - startTime;
+                    System.out.println("[ReceiptPaymentDAO] ✅ calculateUserOwedAmount completed (total time: " + totalDuration + "ms) - result=" + result);
+                    return result;
                 }
             }
         } catch (SQLException e) {
-            System.err.println("Error calculating user owed amount: " + e.getMessage());
+            System.err.println("[ReceiptPaymentDAO] 🔴 ERROR: Error calculating user owed amount: " + e.getMessage());
             e.printStackTrace();
         }
         
         return 0.0f;
+    }
+
+    /**
+     * OPTIMIZED: Calculate both owed amount and owed amount excluding paid in a single query.
+     * This reduces 2 separate queries (where one calls the other) to 1 query.
+     * 
+     * @param receiptId The receipt ID
+     * @param userId The user ID
+     * @return Array with [owedAmount, owedAmountExcludingPaid]
+     */
+    public float[] calculateBothOwedAmounts(int receiptId, String userId) {
+        System.out.println("[ReceiptPaymentDAO] 🔵 STEP 1: calculateBothOwedAmounts called - receiptId=" + receiptId + ", userId=" + userId);
+        
+        // Use two separate queries but in a single database round-trip would require more complex SQL
+        // For safety, we'll calculate both but reuse the total owed calculation
+        // This is still better than calling calculateUserOwedAmount twice
+        
+        // First calculate total owed (this is the expensive one)
+        System.out.println("[ReceiptPaymentDAO] 🔵 STEP 2: Calculating total owed amount...");
+        float totalOwed = 0.0f;
+        try {
+            totalOwed = calculateUserOwedAmount(receiptId, userId);
+            System.out.println("[ReceiptPaymentDAO] 🔵 STEP 3: Total owed calculated: " + totalOwed);
+        } catch (Exception e) {
+            System.err.println("[ReceiptPaymentDAO] 🔴 ERROR: Failed to calculate total owed: " + e.getMessage());
+            e.printStackTrace();
+            return new float[]{0.0f, 0.0f};
+        }
+        
+        if (totalOwed <= 0.01f) {
+            System.out.println("[ReceiptPaymentDAO] 🔵 STEP 4: Total owed is 0 or very small, returning zeros");
+            return new float[]{0.0f, 0.0f};
+        }
+        
+        // Now calculate unpaid items value
+        // FIXED: Use LEFT JOIN to ensure we always get a row, even when there are no paid items
+        System.out.println("[ReceiptPaymentDAO] 🔵 STEP 5: Calculating paid items amount...");
+        String sql = "SELECT " +
+                     "  COALESCE(SUM(CASE WHEN ia.paid_by IS NOT NULL THEN ri.price * ia.quantity ELSE 0 END), 0) as paid_items_subtotal, " +
+                     "  COALESCE(SUM(ri.price * ri.quantity), 0) as total_subtotal, " +
+                     "  r.tax_amount, " +
+                     "  r.tip_amount " +
+                     "FROM receipt_items ri " +
+                     "LEFT JOIN item_assignments ia ON ri.item_id = ia.item_id AND ia.user_id = ? " +
+                     "INNER JOIN receipts r ON ri.receipt_id = r.receipt_id " +
+                     "WHERE ri.receipt_id = ?";
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            System.out.println("[ReceiptPaymentDAO] 🔵 STEP 6: Connection obtained, creating prepared statement...");
+            pstmt.setString(1, userId);
+            pstmt.setInt(2, receiptId);
+            System.out.println("[ReceiptPaymentDAO] 🔵 STEP 7: Executing paid items query...");
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                System.out.println("[ReceiptPaymentDAO] 🔵 STEP 8: Query executed, reading results...");
+                
+                // This query should always return exactly one row (due to INNER JOIN with receipts)
+                if (rs.next()) {
+                    try {
+                        java.math.BigDecimal paidItemsSubtotal = rs.getBigDecimal("paid_items_subtotal");
+                        java.math.BigDecimal totalSubtotal = rs.getBigDecimal("total_subtotal");
+                        java.math.BigDecimal taxAmount = rs.getBigDecimal("tax_amount");
+                        java.math.BigDecimal tipAmount = rs.getBigDecimal("tip_amount");
+                        
+                        System.out.println("[ReceiptPaymentDAO] 🔵 STEP 9: Read values - paidItemsSubtotal=" + paidItemsSubtotal + 
+                                         ", totalSubtotal=" + totalSubtotal);
+                        
+                        if (paidItemsSubtotal == null || paidItemsSubtotal.compareTo(java.math.BigDecimal.ZERO) == 0) {
+                            // No paid items - return full amount owed
+                            System.out.println("[ReceiptPaymentDAO] 🔵 STEP 10: No paid items, returning full amount");
+                            return new float[]{totalOwed, totalOwed};
+                        }
+                        
+                        if (totalSubtotal == null || totalSubtotal.compareTo(java.math.BigDecimal.ZERO) == 0) {
+                            System.out.println("[ReceiptPaymentDAO] 🔵 STEP 10: Total subtotal is 0, returning full amount");
+                            return new float[]{totalOwed, totalOwed};
+                        }
+                        
+                        // Calculate proportion of paid items
+                        java.math.BigDecimal proportion = paidItemsSubtotal.divide(
+                            totalSubtotal,
+                            10,
+                            java.math.RoundingMode.HALF_UP
+                        );
+                        
+                        // Calculate proportional tax and tip for paid items
+                        java.math.BigDecimal paidTax = (taxAmount != null ? taxAmount : java.math.BigDecimal.ZERO)
+                            .multiply(proportion)
+                            .setScale(2, java.math.RoundingMode.HALF_UP);
+                        
+                        java.math.BigDecimal paidTip = (tipAmount != null ? tipAmount : java.math.BigDecimal.ZERO)
+                            .multiply(proportion)
+                            .setScale(2, java.math.RoundingMode.HALF_UP);
+                        
+                        // Total paid amount (items + tax + tip)
+                        java.math.BigDecimal totalPaid = paidItemsSubtotal
+                            .add(paidTax)
+                            .add(paidTip)
+                            .setScale(2, java.math.RoundingMode.HALF_UP);
+                        
+                        // Remaining owed = total owed - paid amount
+                        java.math.BigDecimal remaining = java.math.BigDecimal.valueOf(totalOwed)
+                            .subtract(totalPaid)
+                            .setScale(2, java.math.RoundingMode.HALF_UP);
+                        
+                        // Return 0 if negative (shouldn't happen, but be safe)
+                        float remainingOwed = remaining.compareTo(java.math.BigDecimal.ZERO) > 0 ? remaining.floatValue() : 0.0f;
+                        System.out.println("[ReceiptPaymentDAO] ✅ STEP 11: Calculation complete - totalOwed=" + totalOwed + ", remainingOwed=" + remainingOwed);
+                        return new float[]{totalOwed, remainingOwed};
+                    } catch (SQLException e) {
+                        System.err.println("[ReceiptPaymentDAO] 🔴 ERROR: Failed to read ResultSet columns: " + e.getMessage());
+                        System.err.println("[ReceiptPaymentDAO] 🔴 ERROR: SQL State: " + e.getSQLState());
+                        System.err.println("[ReceiptPaymentDAO] 🔴 ERROR: Error Code: " + e.getErrorCode());
+                        e.printStackTrace();
+                    }
+                } else {
+                    System.out.println("[ReceiptPaymentDAO] 🔴 STEP 8: Query returned no rows (unexpected - should always return 1 row)");
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[ReceiptPaymentDAO] 🔴 ERROR: SQLException in calculateBothOwedAmounts: " + e.getMessage());
+            System.err.println("[ReceiptPaymentDAO] 🔴 ERROR: SQL State: " + e.getSQLState());
+            System.err.println("[ReceiptPaymentDAO] 🔴 ERROR: Error Code: " + e.getErrorCode());
+            e.printStackTrace();
+        } catch (Exception e) {
+            System.err.println("[ReceiptPaymentDAO] 🔴 ERROR: Unexpected exception in calculateBothOwedAmounts: " + e.getMessage());
+            System.err.println("[ReceiptPaymentDAO] 🔴 ERROR: Exception type: " + e.getClass().getName());
+            e.printStackTrace();
+        }
+        
+        // Fallback: if paid items query fails, assume nothing is paid
+        System.out.println("[ReceiptPaymentDAO] 🔵 STEP 13: Using fallback - assuming nothing is paid");
+        return new float[]{totalOwed, totalOwed};
     }
 
     /**

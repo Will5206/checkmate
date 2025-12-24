@@ -1234,22 +1234,37 @@ public class ReceiptController {
                     // Claim item
                     int quantity = Integer.parseInt(query.getOrDefault("quantity", "1"));
                     
-                    // Get item info to validate quantity
-                    models.ReceiptItem item = receiptDAO.getReceiptItemById(itemId);
-                    if (item == null) {
+                    System.out.println("[ClaimItemHandler] 🔵 STEP 1: Starting claim process - itemId=" + itemId + ", userId=" + userIdStr + ", quantity=" + quantity);
+                    
+                    // OPTIMIZED: Get item info + quantities in a single query (reduces 3 queries to 1)
+                    System.out.println("[ClaimItemHandler] 🔵 STEP 2: Calling getItemClaimInfo...");
+                    ReceiptDAO.ItemClaimInfo claimInfo = receiptDAO.getItemClaimInfo(itemId, userIdStr);
+                    
+                    if (claimInfo == null || claimInfo.item == null) {
+                        System.err.println("[ClaimItemHandler] 🔴 ERROR: getItemClaimInfo returned null - item not found or query failed");
                         sendJson(exchange, 400, new JSONObject()
                             .put("success", false)
-                            .put("message", "Item not found"));
+                            .put("message", "Item not found or database error occurred"));
                         return;
                     }
                     
-                    // Get current user's claimed quantity
-                    int userCurrentQty = receiptDAO.getUserClaimedQuantity(itemId, userIdStr);
-                    int totalClaimedByOthers = receiptDAO.getTotalClaimedQuantity(itemId) - userCurrentQty;
+                    System.out.println("[ClaimItemHandler] 🔵 STEP 3: ItemClaimInfo retrieved - itemName=" + claimInfo.item.getName() + 
+                                     ", userClaimedQty=" + claimInfo.userClaimedQuantity + 
+                                     ", totalClaimedQty=" + claimInfo.totalClaimedQuantity);
+                    
+                    models.ReceiptItem item = claimInfo.item;
+                    int userCurrentQty = claimInfo.userClaimedQuantity;
+                    int totalClaimedByOthers = claimInfo.totalClaimedQuantity - userCurrentQty;
                     int availableQty = item.getQuantity() - totalClaimedByOthers;
+                    
+                    System.out.println("[ClaimItemHandler] 🔵 STEP 4: Validation - itemQuantity=" + item.getQuantity() + 
+                                     ", userCurrentQty=" + userCurrentQty + 
+                                     ", totalClaimedByOthers=" + totalClaimedByOthers + 
+                                     ", availableQty=" + availableQty);
                     
                     // Validate quantity
                     if (quantity <= 0) {
+                        System.err.println("[ClaimItemHandler] 🔴 ERROR: Invalid quantity=" + quantity);
                         sendJson(exchange, 400, new JSONObject()
                             .put("success", false)
                             .put("message", "Quantity must be greater than 0"));
@@ -1257,6 +1272,7 @@ public class ReceiptController {
                     }
                     
                     if (quantity > availableQty) {
+                        System.err.println("[ClaimItemHandler] 🔴 ERROR: Quantity exceeds available - quantity=" + quantity + ", available=" + availableQty);
                         sendJson(exchange, 400, new JSONObject()
                             .put("success", false)
                             .put("message", String.format("Cannot claim %d. Only %d available (item quantity: %d, already claimed by others: %d)", 
@@ -1264,7 +1280,11 @@ public class ReceiptController {
                         return;
                     }
                     
+                    System.out.println("[ClaimItemHandler] 🔵 STEP 5: Validation passed, calling assignItemToUser...");
+                    long assignStartTime = System.currentTimeMillis();
                     success = receiptDAO.assignItemToUser(itemId, userIdStr, quantity);
+                    long assignDuration = System.currentTimeMillis() - assignStartTime;
+                    System.out.println("[ClaimItemHandler] 🔵 STEP 6: assignItemToUser returned success=" + success + " (took " + assignDuration + "ms)");
                 } else {
                     sendJson(exchange, 405, new JSONObject()
                         .put("success", false)
@@ -1273,26 +1293,57 @@ public class ReceiptController {
                 }
                 
                 if (success) {
-                    // OPTIMIZATION: Calculate both amounts efficiently
-                    // calculateUserOwedAmountExcludingPaid already calls calculateUserOwedAmount internally,
-                    // so we calculate it once and reuse the result
-                    float owedAmount = receiptDAO.calculateUserOwedAmount(receiptId, userIdStr);
-                    // This method internally calls calculateUserOwedAmount again, but we can't easily optimize
-                    // without refactoring. For now, keep it simple and safe.
-                    float owedAmountExcludingPaid = receiptDAO.calculateUserOwedAmountExcludingPaid(receiptId, userIdStr);
+                    System.out.println("[ClaimItemHandler] 🔵 STEP 7: Assignment successful, calculating owed amounts...");
                     
-                    JSONObject resp = new JSONObject()
-                        .put("success", true)
-                        .put("message", isDelete ? "Item unclaimed" : "Item claimed")
-                        .put("owedAmount", owedAmount)
-                        .put("owedAmountExcludingPaid", owedAmountExcludingPaid);
-                    sendJson(exchange, 200, resp);
+                    // OPTIMIZED: Calculate both amounts efficiently (reduces 3 queries to 2 by avoiding redundant call)
+                    // Original: calculateUserOwedAmount (q1) + calculateUserOwedAmountExcludingPaid (which calls calculateUserOwedAmount again = q2, then paid items = q3)
+                    // New: calculateBothOwedAmounts (total owed = q1, paid items = q2, no redundant call)
+                    try {
+                        long calcStartTime = System.currentTimeMillis();
+                        float[] amounts = receiptDAO.calculateBothOwedAmounts(receiptId, userIdStr);
+                        long calcDuration = System.currentTimeMillis() - calcStartTime;
+                        System.out.println("[ClaimItemHandler] 🔵 STEP 7.5: calculateBothOwedAmounts took " + calcDuration + "ms");
+                        float owedAmount = amounts[0];
+                        float owedAmountExcludingPaid = amounts[1];
+                        
+                        System.out.println("[ClaimItemHandler] 🔵 STEP 8: Owed amounts calculated - owedAmount=" + owedAmount + 
+                                         ", owedAmountExcludingPaid=" + owedAmountExcludingPaid);
+                        
+                        JSONObject resp = new JSONObject()
+                            .put("success", true)
+                            .put("message", isDelete ? "Item unclaimed" : "Item claimed")
+                            .put("owedAmount", owedAmount)
+                            .put("owedAmountExcludingPaid", owedAmountExcludingPaid);
+                        
+                        System.out.println("[ClaimItemHandler] 🔵 STEP 9: Sending success response");
+                        sendJson(exchange, 200, resp);
+                        System.out.println("[ClaimItemHandler] ✅ STEP 10: Claim process completed successfully");
+                    } catch (Exception e) {
+                        System.err.println("[ClaimItemHandler] 🔴 ERROR: Exception calculating owed amounts: " + e.getMessage());
+                        e.printStackTrace();
+                        sendJson(exchange, 500, new JSONObject()
+                            .put("success", false)
+                            .put("message", "Failed to calculate owed amounts: " + e.getMessage()));
+                    }
                 } else {
+                    System.err.println("[ClaimItemHandler] 🔴 ERROR: assignItemToUser returned false - assignment failed");
                     sendJson(exchange, 400, new JSONObject()
                         .put("success", false)
                         .put("message", "Failed to update item assignment"));
                 }
+            } catch (NumberFormatException e) {
+                System.err.println("[ClaimItemHandler] 🔴 ERROR: NumberFormatException - " + e.getMessage());
+                e.printStackTrace();
+                sendJson(exchange, 400, new JSONObject()
+                    .put("success", false)
+                    .put("message", "Invalid parameters: " + e.getMessage()));
             } catch (Exception e) {
+                System.err.println("[ClaimItemHandler] 🔴 ERROR: Exception in claim handler: " + e.getMessage());
+                System.err.println("[ClaimItemHandler] 🔴 ERROR: Exception type: " + e.getClass().getName());
+                if (e.getCause() != null) {
+                    System.err.println("[ClaimItemHandler] 🔴 ERROR: Caused by: " + e.getCause().getClass().getName() + " - " + e.getCause().getMessage());
+                }
+                e.printStackTrace();
                 sendJson(exchange, 400, new JSONObject()
                     .put("success", false)
                     .put("message", "Invalid parameters: " + e.getMessage()));
@@ -1349,11 +1400,13 @@ public class ReceiptController {
                 ReceiptDAO receiptDAO = receiptService.getReceiptDAO();
                 database.UserDAO userDAO = new database.UserDAO();
                 
-                // Get user's assignments
+                // OPTIMIZED: Get assignments and both owed amounts in fewer queries
                 Map<Integer, Integer> assignments = receiptDAO.getItemAssignmentsForUser(receiptId, userIdStr);
-                float owedAmount = receiptDAO.calculateUserOwedAmount(receiptId, userIdStr);
-                // Calculate amount owed excluding paid items (for "Amount Owed" section)
-                float owedAmountExcludingPaid = receiptDAO.calculateUserOwedAmountExcludingPaid(receiptId, userIdStr);
+                
+                // OPTIMIZED: Use calculateBothOwedAmounts instead of calling both separately (saves 1 query)
+                float[] amounts = receiptDAO.calculateBothOwedAmounts(receiptId, userIdStr);
+                float owedAmount = amounts[0];
+                float owedAmountExcludingPaid = amounts[1];
                 
                 System.out.println("[ReceiptController] Found " + assignments.size() + " item assignments, owedAmount: " + owedAmount + ", owedAmountExcludingPaid: " + owedAmountExcludingPaid);
                 
@@ -1366,6 +1419,18 @@ public class ReceiptController {
                 // Get item payment info from receipt_items table (new approach)
                 Map<Integer, Map<String, Object>> itemPaymentMap = receiptDAO.getItemPaymentInfoForReceipt(receiptId);
                 
+                // OPTIMIZED: Batch fetch all payer user IDs first, then batch fetch user names
+                java.util.Set<String> payerUserIds = new java.util.HashSet<>();
+                for (Map<String, Object> paymentData : itemPaymentMap.values()) {
+                    String paidByUserId = (String) paymentData.get("paidBy");
+                    if (paidByUserId != null && !paidByUserId.isEmpty()) {
+                        payerUserIds.add(paidByUserId);
+                    }
+                }
+                
+                // Batch fetch all payer names in a single query
+                Map<String, models.User> payerUsersMap = userDAO.findUsersByIdsBatch(new java.util.ArrayList<>(payerUserIds));
+                
                 // Build item payment info JSON with payer names
                 JSONObject itemPaymentInfo = new JSONObject();
                 for (Map.Entry<Integer, Map<String, Object>> entry : itemPaymentMap.entrySet()) {
@@ -1373,8 +1438,8 @@ public class ReceiptController {
                     Map<String, Object> paymentData = entry.getValue();
                     String paidByUserId = (String) paymentData.get("paidBy");
                     
-                    // Get payer's name
-                    models.User payer = userDAO.findUserById(paidByUserId);
+                    // Get payer's name from batch-fetched map
+                    models.User payer = payerUsersMap.get(paidByUserId);
                     String payerName = payer != null ? payer.getName() : "Unknown";
                     
                     JSONObject paymentJson = new JSONObject()

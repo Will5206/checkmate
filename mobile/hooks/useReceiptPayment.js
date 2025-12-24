@@ -3,7 +3,7 @@
  * Handles payment logic, status tracking, and item assignments loading
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -139,24 +139,44 @@ export function useReceiptPayment(receiptId, isFromActivity, uploadedBy, billDat
     }
   }, [receiptId, billData.items, setItemAssignments]);
 
-  // Load item assignments when viewing from Activity
+  // OPTIMIZED: Load item assignments when viewing from Activity (only once, with debouncing)
+  const hasLoadedRef = useRef(false);
+  const lastReceiptIdRef = useRef(null);
+  
   useEffect(() => {
     if (isFromActivity && receiptId) {
-      console.log('Loading item assignments and payment info for receiptId:', receiptId);
-      loadItemAssignments();
-      if (!hasCheckedCompleteStatus) {
-        checkReceiptCompleteStatus();
+      // Only load if receiptId changed or hasn't been loaded yet
+      if (receiptId !== lastReceiptIdRef.current || !hasLoadedRef.current) {
+        console.log('Loading item assignments and payment info for receiptId:', receiptId);
+        lastReceiptIdRef.current = receiptId;
+        hasLoadedRef.current = true;
+        loadItemAssignments();
+        if (!hasCheckedCompleteStatus) {
+          checkReceiptCompleteStatus();
+        }
       }
+    } else {
+      // Reset when not from activity
+      hasLoadedRef.current = false;
+      lastReceiptIdRef.current = null;
     }
   }, [isFromActivity, receiptId, hasCheckedCompleteStatus, loadItemAssignments, checkReceiptCompleteStatus]);
 
-  // Reload when screen comes into focus
+  // OPTIMIZED: Reload when screen comes into focus (with debouncing to prevent rapid reloads)
+  const lastFocusTimeRef = useRef(0);
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
       if (isFromActivity && receiptId) {
-        console.log('BillReview screen focused - reloading payment info and item assignments');
-        loadItemAssignments();
-        checkReceiptCompleteStatus();
+        const now = Date.now();
+        // Only reload if it's been more than 1 second since last reload
+        if (now - lastFocusTimeRef.current > 1000) {
+          console.log('BillReview screen focused - reloading payment info and item assignments');
+          lastFocusTimeRef.current = now;
+          loadItemAssignments();
+          checkReceiptCompleteStatus();
+        } else {
+          console.log('BillReview screen focused - skipping reload (too soon after last reload)');
+        }
       }
     });
     return unsubscribe;

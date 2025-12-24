@@ -1,9 +1,6 @@
 package database;
 
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.*;
 import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
@@ -111,7 +108,26 @@ public class DatabaseConnection {
             
             System.out.println("🔵 [DATABASE INIT] Attempting to connect to database...");
             long connStartTime = System.currentTimeMillis();
-            this.connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
+            
+            // OPTIMIZED: Add connection parameters to keep connection alive and improve performance
+            String optimizedUrl = DB_URL;
+            if (!optimizedUrl.contains("?")) {
+                optimizedUrl += "?";
+            } else {
+                optimizedUrl += "&";
+            }
+            optimizedUrl += "autoReconnect=true" +
+                           "&useSSL=false" +
+                           "&allowPublicKeyRetrieval=true" +
+                           "&serverTimezone=UTC" +
+                           "&useUnicode=true" +
+                           "&characterEncoding=UTF-8" +
+                           "&tcpKeepAlive=true" +
+                           "&tcpNoDelay=true";
+            
+            this.connection = DriverManager.getConnection(optimizedUrl, DB_USER, DB_PASSWORD);
+            // Set connection to not auto-close when returned from try-with-resources
+            // This is safe because we manage the connection lifecycle ourselves
             long connTime = System.currentTimeMillis() - connStartTime;
             System.out.println("🔵 [DATABASE INIT] Database connection established in " + connTime + "ms");
             
@@ -167,82 +183,360 @@ public class DatabaseConnection {
      * @return Connection object (never null)
      * @throws SQLException if connection cannot be established
      */
+    /**
+     * OPTIMIZED: Get connection with improved connection management.
+     * Reduces connection overhead by:
+     * 1. Less aggressive validation (only when connection appears closed)
+     * 2. Connection URL parameters to keep connections alive
+     * 3. Reduced logging overhead
+     * 
+     * @return Connection object (wrapped to prevent accidental closure)
+     * @throws SQLException if connection cannot be established
+     */
     public synchronized Connection getConnection() throws SQLException {
-        System.out.println("🔵 [DATABASE STEP 1/4] DatabaseConnection.getConnection() called");
-        
-        //check if connection is still valid - reconnect if needed
-        //synchronized to prevent race conditions -------when multiple threads
-        // check simultaneously
-        System.out.println("🔵 [DATABASE STEP 2/4] Checking connection status...");
+        // OPTIMIZED: Reduced logging - only log when reconnecting
         boolean needsReconnect = false;
         
         if (connection == null) {
-            System.out.println("🔵 [DATABASE STEP 2/4] Connection is null");
             needsReconnect = true;
         } else {
             try {
+                // Only check if closed, don't validate every time (isValid is expensive)
                 if (connection.isClosed()) {
-                    System.out.println("🔵 [DATABASE STEP 2/4] Connection is closed");
                     needsReconnect = true;
-                } else {
-                    // Test if connection is still valid (with 5 second timeout)
-                    System.out.println("🔵 [DATABASE STEP 2/4] Testing connection validity...");
-                    boolean isValid = connection.isValid(5);
-                    if (!isValid) {
-                        System.out.println("🔵 [DATABASE STEP 2/4] Connection is not valid");
-                        needsReconnect = true;
-                    } else {
-                        System.out.println("🔵 [DATABASE STEP 2/4] Connection is valid");
-                    }
                 }
+                // If not closed, assume it's valid and reuse (MySQL autoReconnect will handle issues)
             } catch (SQLException e) {
-                System.err.println("🔴 [DATABASE STEP 2/4 ERROR] Error checking connection: " + e.getMessage());
+                // Connection check failed, need to reconnect
                 needsReconnect = true;
             }
         }
         
         if (needsReconnect) {
-            System.out.println("🔵 [DATABASE STEP 3/4] Creating new connection...");
-            System.out.println("🔵 [DATABASE STEP 3/4] DB_URL: " + DB_URL.replace(DB_PASSWORD, "***"));
-            System.out.println("🔵 [DATABASE STEP 3/4] DB_USER: " + DB_USER);
+            System.out.println("🔵 [DATABASE] Creating new connection (took " + 
+                             (connection == null ? "N/A" : "closed") + ")...");
             
             long connStartTime = System.currentTimeMillis();
             try {
-                connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
-                long connTime = System.currentTimeMillis() - connStartTime;
-                System.out.println("🔵 [DATABASE STEP 3/4] Connection established in " + connTime + "ms");
+                // Use optimized URL with connection parameters
+                String optimizedUrl = DB_URL;
+                if (!optimizedUrl.contains("?")) {
+                    optimizedUrl += "?";
+                } else {
+                    optimizedUrl += "&";
+                }
+                optimizedUrl += "autoReconnect=true" +
+                               "&useSSL=false" +
+                               "&allowPublicKeyRetrieval=true" +
+                               "&serverTimezone=UTC" +
+                               "&useUnicode=true" +
+                               "&characterEncoding=UTF-8" +
+                               "&tcpKeepAlive=true" +
+                               "&tcpNoDelay=true";
                 
-                // Verify reconnected connection
-                if (connection != null && !connection.isClosed()) {
-                    try {
-                        String catalog = connection.getCatalog();
-                        System.out.println("🔵 [DATABASE STEP 3/4] Reconnected to database: " + catalog);
-                    } catch (SQLException e) {
-                        // Ignore metadata errors
-                    }
-                }
-                System.out.println("🔵 [DATABASE STEP 3/4] Database connection established/reconnected");
+                connection = DriverManager.getConnection(optimizedUrl, DB_USER, DB_PASSWORD);
+                long connTime = System.currentTimeMillis() - connStartTime;
+                System.out.println("🔵 [DATABASE] Connection established in " + connTime + "ms");
             } catch (SQLException e) {
-                System.err.println("🔴 [DATABASE STEP 3/4 ERROR] Failed to create connection:");
-                System.err.println("🔴 [DATABASE STEP 3/4 ERROR] Message: " + e.getMessage());
-                System.err.println("🔴 [DATABASE STEP 3/4 ERROR] SQL State: " + e.getSQLState());
-                System.err.println("🔴 [DATABASE STEP 3/4 ERROR] Error Code: " + e.getErrorCode());
+                System.err.println("🔴 [DATABASE ERROR] Failed to create connection: " + e.getMessage());
                 throw e;
-            }
-        } else {
-            System.out.println("🔵 [DATABASE STEP 3/4] Using existing connection");
-            try {
-                if (connection != null) {
-                    String catalog = connection.getCatalog();
-                    System.out.println("🔵 [DATABASE STEP 3/4] Current database: " + catalog);
-                }
-            } catch (SQLException e) {
-                // Ignore metadata errors
             }
         }
         
-        System.out.println("🔵 [DATABASE STEP 4/4] Returning connection");
-        return connection;
+        // Return a wrapper that prevents accidental closure
+        return new ConnectionWrapper(connection);
+    }
+    
+    /**
+     * Wrapper class to prevent accidental closure of the singleton connection.
+     * This allows try-with-resources to work without actually closing the connection.
+     */
+    private static class ConnectionWrapper implements Connection {
+        private final Connection delegate;
+        
+        public ConnectionWrapper(Connection delegate) {
+            this.delegate = delegate;
+        }
+        
+        @Override
+        public void close() throws SQLException {
+            // Don't actually close - just reset auto-commit and clear any warnings
+            // This allows try-with-resources to work without breaking the singleton
+            try {
+                if (delegate != null && !delegate.isClosed()) {
+                    delegate.setAutoCommit(true); // Reset to default
+                    delegate.clearWarnings();
+                }
+            } catch (SQLException e) {
+                // If connection is already closed, that's fine
+            }
+        }
+        
+        // Delegate all other Connection methods to the actual connection
+        @Override
+        public Statement createStatement() throws SQLException {
+            return delegate.createStatement();
+        }
+        
+        @Override
+        public PreparedStatement prepareStatement(String sql) throws SQLException {
+            return delegate.prepareStatement(sql);
+        }
+        
+        @Override
+        public CallableStatement prepareCall(String sql) throws SQLException {
+            return delegate.prepareCall(sql);
+        }
+        
+        @Override
+        public String nativeSQL(String sql) throws SQLException {
+            return delegate.nativeSQL(sql);
+        }
+        
+        @Override
+        public void setAutoCommit(boolean autoCommit) throws SQLException {
+            delegate.setAutoCommit(autoCommit);
+        }
+        
+        @Override
+        public boolean getAutoCommit() throws SQLException {
+            return delegate.getAutoCommit();
+        }
+        
+        @Override
+        public void commit() throws SQLException {
+            delegate.commit();
+        }
+        
+        @Override
+        public void rollback() throws SQLException {
+            delegate.rollback();
+        }
+        
+        @Override
+        public boolean isClosed() throws SQLException {
+            return delegate.isClosed();
+        }
+        
+        @Override
+        public DatabaseMetaData getMetaData() throws SQLException {
+            return delegate.getMetaData();
+        }
+        
+        @Override
+        public void setReadOnly(boolean readOnly) throws SQLException {
+            delegate.setReadOnly(readOnly);
+        }
+        
+        @Override
+        public boolean isReadOnly() throws SQLException {
+            return delegate.isReadOnly();
+        }
+        
+        @Override
+        public void setCatalog(String catalog) throws SQLException {
+            delegate.setCatalog(catalog);
+        }
+        
+        @Override
+        public String getCatalog() throws SQLException {
+            return delegate.getCatalog();
+        }
+        
+        @Override
+        public void setTransactionIsolation(int level) throws SQLException {
+            delegate.setTransactionIsolation(level);
+        }
+        
+        @Override
+        public int getTransactionIsolation() throws SQLException {
+            return delegate.getTransactionIsolation();
+        }
+        
+        @Override
+        public SQLWarning getWarnings() throws SQLException {
+            return delegate.getWarnings();
+        }
+        
+        @Override
+        public void clearWarnings() throws SQLException {
+            delegate.clearWarnings();
+        }
+        
+        @Override
+        public Statement createStatement(int resultSetType, int resultSetConcurrency) throws SQLException {
+            return delegate.createStatement(resultSetType, resultSetConcurrency);
+        }
+        
+        @Override
+        public PreparedStatement prepareStatement(String sql, int resultSetType, int resultSetConcurrency) throws SQLException {
+            return delegate.prepareStatement(sql, resultSetType, resultSetConcurrency);
+        }
+        
+        @Override
+        public CallableStatement prepareCall(String sql, int resultSetType, int resultSetConcurrency) throws SQLException {
+            return delegate.prepareCall(sql, resultSetType, resultSetConcurrency);
+        }
+        
+        @Override
+        public java.util.Map<String, Class<?>> getTypeMap() throws SQLException {
+            return delegate.getTypeMap();
+        }
+        
+        @Override
+        public void setTypeMap(java.util.Map<String, Class<?>> map) throws SQLException {
+            delegate.setTypeMap(map);
+        }
+        
+        @Override
+        public void setHoldability(int holdability) throws SQLException {
+            delegate.setHoldability(holdability);
+        }
+        
+        @Override
+        public int getHoldability() throws SQLException {
+            return delegate.getHoldability();
+        }
+        
+        @Override
+        public Savepoint setSavepoint() throws SQLException {
+            return delegate.setSavepoint();
+        }
+        
+        @Override
+        public Savepoint setSavepoint(String name) throws SQLException {
+            return delegate.setSavepoint(name);
+        }
+        
+        @Override
+        public void rollback(Savepoint savepoint) throws SQLException {
+            delegate.rollback(savepoint);
+        }
+        
+        @Override
+        public void releaseSavepoint(Savepoint savepoint) throws SQLException {
+            delegate.releaseSavepoint(savepoint);
+        }
+        
+        @Override
+        public Statement createStatement(int resultSetType, int resultSetConcurrency, int resultSetHoldability) throws SQLException {
+            return delegate.createStatement(resultSetType, resultSetConcurrency, resultSetHoldability);
+        }
+        
+        @Override
+        public PreparedStatement prepareStatement(String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability) throws SQLException {
+            return delegate.prepareStatement(sql, resultSetType, resultSetConcurrency, resultSetHoldability);
+        }
+        
+        @Override
+        public CallableStatement prepareCall(String sql, int resultSetType, int resultSetConcurrency, int resultSetHoldability) throws SQLException {
+            return delegate.prepareCall(sql, resultSetType, resultSetConcurrency, resultSetHoldability);
+        }
+        
+        @Override
+        public PreparedStatement prepareStatement(String sql, int autoGeneratedKeys) throws SQLException {
+            return delegate.prepareStatement(sql, autoGeneratedKeys);
+        }
+        
+        @Override
+        public PreparedStatement prepareStatement(String sql, int[] columnIndexes) throws SQLException {
+            return delegate.prepareStatement(sql, columnIndexes);
+        }
+        
+        @Override
+        public PreparedStatement prepareStatement(String sql, String[] columnNames) throws SQLException {
+            return delegate.prepareStatement(sql, columnNames);
+        }
+        
+        @Override
+        public Clob createClob() throws SQLException {
+            return delegate.createClob();
+        }
+        
+        @Override
+        public Blob createBlob() throws SQLException {
+            return delegate.createBlob();
+        }
+        
+        @Override
+        public NClob createNClob() throws SQLException {
+            return delegate.createNClob();
+        }
+        
+        @Override
+        public SQLXML createSQLXML() throws SQLException {
+            return delegate.createSQLXML();
+        }
+        
+        @Override
+        public boolean isValid(int timeout) throws SQLException {
+            return delegate.isValid(timeout);
+        }
+        
+        @Override
+        public void setClientInfo(String name, String value) throws SQLClientInfoException {
+            delegate.setClientInfo(name, value);
+        }
+        
+        @Override
+        public void setClientInfo(java.util.Properties properties) throws SQLClientInfoException {
+            delegate.setClientInfo(properties);
+        }
+        
+        @Override
+        public String getClientInfo(String name) throws SQLException {
+            return delegate.getClientInfo(name);
+        }
+        
+        @Override
+        public java.util.Properties getClientInfo() throws SQLException {
+            return delegate.getClientInfo();
+        }
+        
+        @Override
+        public Array createArrayOf(String typeName, Object[] elements) throws SQLException {
+            return delegate.createArrayOf(typeName, elements);
+        }
+        
+        @Override
+        public Struct createStruct(String typeName, Object[] attributes) throws SQLException {
+            return delegate.createStruct(typeName, attributes);
+        }
+        
+        @Override
+        public void setSchema(String schema) throws SQLException {
+            delegate.setSchema(schema);
+        }
+        
+        @Override
+        public String getSchema() throws SQLException {
+            return delegate.getSchema();
+        }
+        
+        @Override
+        public void abort(java.util.concurrent.Executor executor) throws SQLException {
+            delegate.abort(executor);
+        }
+        
+        @Override
+        public void setNetworkTimeout(java.util.concurrent.Executor executor, int milliseconds) throws SQLException {
+            delegate.setNetworkTimeout(executor, milliseconds);
+        }
+        
+        @Override
+        public int getNetworkTimeout() throws SQLException {
+            return delegate.getNetworkTimeout();
+        }
+        
+        @Override
+        public <T> T unwrap(Class<T> iface) throws SQLException {
+            return delegate.unwrap(iface);
+        }
+        
+        @Override
+        public boolean isWrapperFor(Class<?> iface) throws SQLException {
+            return delegate.isWrapperFor(iface);
+        }
     }
     
     /**
