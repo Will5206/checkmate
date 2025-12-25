@@ -8,6 +8,8 @@ import org.json.JSONObject;
 import utils.ValidationUtils;
 import utils.AuthMiddleware;
 import utils.ErrorResponse;
+import utils.Logger;
+import utils.RequestUtils;
 import database.UserDAO;
 import models.User;
 import models.Friend;
@@ -27,7 +29,7 @@ public class FriendController {
     public static class AddFriendHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            addCors(exchange);
+            ErrorResponse.addCorsHeaders(exchange);
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(200, -1);
                 return;
@@ -44,7 +46,7 @@ public class FriendController {
                 return;
             }
             
-            Map<String, String> query = parseQuery(exchange.getRequestURI());
+            Map<String, String> query = RequestUtils.parseQuery(exchange.getRequestURI());
             try {
                 String userId = query.getOrDefault("userId", "");
                 String friendId = query.getOrDefault("friendId", "");
@@ -61,12 +63,11 @@ public class FriendController {
                 }
 
                 boolean added = friendService.addFriend(userId, friendId);
-                JSONObject resp = new JSONObject()
-                        .put("success", true)
-                        .put("added", added)
-                        .put("userId", userId)
-                        .put("friendId", friendId);
-                sendJson(exchange, 200, resp);
+                JSONObject resp = ErrorResponse.success(null);
+                resp.put("added", added);
+                resp.put("userId", userId);
+                resp.put("friendId", friendId);
+                ErrorResponse.sendJson(exchange, 200, resp);
             } catch (Exception e) {
                 ErrorResponse.sendError(exchange, 400, "Invalid parameters: " + e.getMessage());
             }
@@ -76,7 +77,7 @@ public class FriendController {
     public static class RemoveFriendHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            addCors(exchange);
+            ErrorResponse.addCorsHeaders(exchange);
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(200, -1);
                 return;
@@ -93,12 +94,12 @@ public class FriendController {
                 return;
             }
             
-            Map<String, String> query = parseQuery(exchange.getRequestURI());
+            Map<String, String> query = RequestUtils.parseQuery(exchange.getRequestURI());
             try {
                 String userId = query.getOrDefault("userId", "");
                 String friendId = query.getOrDefault("friendId", "");
 
-                System.out.println("🔴 [4/8] RemoveFriendHandler: userId=" + userId + ", friendId=" + friendId);
+                Logger.debug("FriendController", "RemoveFriendHandler: userId=" + userId + ", friendId=" + friendId);
 
                 if (userId.isEmpty() || friendId.isEmpty()) {
                     ErrorResponse.sendError(exchange, 400, "userId and friendId are required");
@@ -112,13 +113,12 @@ public class FriendController {
                 }
 
                 boolean removed = friendService.removeFriend(userId, friendId);
-                System.out.println("🔴 [7/8] RemoveFriendHandler: removed=" + removed);
-                JSONObject resp = new JSONObject()
-                        .put("success", true)
-                        .put("removed", removed)
-                        .put("userId", userId)
-                        .put("friendId", friendId);
-                sendJson(exchange, 200, resp);
+                Logger.debug("FriendController", "RemoveFriendHandler: removed=" + removed);
+                JSONObject resp = ErrorResponse.success(null);
+                resp.put("removed", removed);
+                resp.put("userId", userId);
+                resp.put("friendId", friendId);
+                ErrorResponse.sendJson(exchange, 200, resp);
             } catch (Exception e) {
                 ErrorResponse.sendError(exchange, 400, "Invalid parameters: " + e.getMessage());
             }
@@ -130,7 +130,7 @@ public class FriendController {
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            addCors(exchange);
+            ErrorResponse.addCorsHeaders(exchange);
 
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(200, -1);
@@ -138,9 +138,7 @@ public class FriendController {
             }
 
             if (!"POST".equals(exchange.getRequestMethod())) {
-                sendJson(exchange, 405, new JSONObject()
-                    .put("success", false)
-                    .put("message", "Method not allowed"));
+                ErrorResponse.sendError(exchange, 405, "Method not allowed");
                 return;
             }
 
@@ -151,7 +149,7 @@ public class FriendController {
                 return;
             }
 
-            Map<String, String> query = parseQuery(exchange.getRequestURI());
+            Map<String, String> query = RequestUtils.parseQuery(exchange.getRequestURI());
 
             try {
                 String userId = query.getOrDefault("userId", "");
@@ -159,33 +157,25 @@ public class FriendController {
 
                 // Validate inputs
                 if (userId.isEmpty()) {
-                    sendJson(exchange, 400, new JSONObject()
-                        .put("success", false)
-                        .put("message", "userId is required"));
+                    ErrorResponse.sendError(exchange, 400, "userId is required");
                     return;
                 }
                 
                 // Verify user can only add friends for themselves
                 if (!userId.equals(authenticatedUserId)) {
-                    sendJson(exchange, 403, new JSONObject()
-                        .put("success", false)
-                        .put("message", "Forbidden: Cannot add friends for another user"));
+                    ErrorResponse.sendError(exchange, 403, "Forbidden: Cannot add friends for another user");
                     return;
                 }
 
                 if (friendEmail.isEmpty()) {
-                    sendJson(exchange, 400, new JSONObject()
-                        .put("success", false)
-                        .put("message", "email is required"));
+                    ErrorResponse.sendError(exchange, 400, "Email is required");
                     return;
                 }
 
                 // Validate and sanitize email format
                 friendEmail = friendEmail.trim().toLowerCase();
                 if (!ValidationUtils.isValidEmail(friendEmail)) {
-                    sendJson(exchange, 400, new JSONObject()
-                        .put("success", false)
-                        .put("message", "Invalid email format"));
+                    ErrorResponse.sendError(exchange, 400, "Invalid email format");
                     return;
                 }
 
@@ -193,9 +183,7 @@ public class FriendController {
                 User friendUser = userDAO.findUserByEmail(friendEmail);
 
                 if (friendUser == null) {
-                    sendJson(exchange, 404, new JSONObject()
-                        .put("success", false)
-                        .put("message", "No user found with that email address"));
+                    ErrorResponse.sendError(exchange, 404, "No user found with that email address");
                     return;
                 }
 
@@ -203,9 +191,7 @@ public class FriendController {
 
                 // Prevent self-friending
                 if (userId.equals(friendId)) {
-                    sendJson(exchange, 400, new JSONObject()
-                        .put("success", false)
-                        .put("message", "Cannot add yourself as a friend"));
+                    ErrorResponse.sendError(exchange, 400, "Cannot add yourself as a friend");
                     return;
                 }
 
@@ -279,9 +265,8 @@ public class FriendController {
                 sendJson(exchange, 200, resp);
 
             } catch (Exception e) {
-                sendJson(exchange, 500, new JSONObject()
-                    .put("success", false)
-                    .put("message", "Server error: " + e.getMessage()));
+                Logger.error("FriendController", "Server error: " + e.getMessage(), e);
+                ErrorResponse.sendError(exchange, 500, "Server error: " + e.getMessage());
             }
         }
     }
@@ -289,7 +274,7 @@ public class FriendController {
     public static class ListFriendsHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            addCors(exchange);
+            ErrorResponse.addCorsHeaders(exchange);
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(200, -1);
                 return;
@@ -306,7 +291,7 @@ public class FriendController {
                 return;
             }
             
-            Map<String, String> query = parseQuery(exchange.getRequestURI());
+            Map<String, String> query = RequestUtils.parseQuery(exchange.getRequestURI());
             try {
                 String userId = query.getOrDefault("userId", "");
 
@@ -358,7 +343,7 @@ public class FriendController {
     public static class AcceptFriendRequestHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            addCors(exchange);
+            ErrorResponse.addCorsHeaders(exchange);
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(200, -1);
                 return;
@@ -368,33 +353,27 @@ public class FriendController {
                 return;
             }
             
-            Map<String, String> query = parseQuery(exchange.getRequestURI());
+            Map<String, String> query = RequestUtils.parseQuery(exchange.getRequestURI());
             try {
                 String userId = query.getOrDefault("userId", "");
                 String friendId = query.getOrDefault("friendId", "");
 
                 if (userId.isEmpty() || friendId.isEmpty()) {
-                    sendJson(exchange, 400, new JSONObject()
-                        .put("success", false)
-                        .put("message", "userId and friendId are required"));
+                    ErrorResponse.sendError(exchange, 400, "userId and friendId are required");
                     return;
                 }
 
                 // Verify that current user (userId) is the recipient, not the requester
                 Friend friendship = friendService.getFriendship(userId, friendId);
                 if (friendship == null || !"pending".equals(friendship.getStatus())) {
-                    sendJson(exchange, 400, new JSONObject()
-                        .put("success", false)
-                        .put("message", "No pending friend request found"));
+                    ErrorResponse.sendError(exchange, 400, "No pending friend request found");
                     return;
                 }
                 
                 // Check if current user is the recipient (not the requester)
                 String requestedBy = friendship.getRequestedBy();
                 if (requestedBy == null || requestedBy.equals(userId)) {
-                    sendJson(exchange, 400, new JSONObject()
-                        .put("success", false)
-                        .put("message", "Only the recipient can accept a friend request"));
+                    ErrorResponse.sendError(exchange, 400, "Only the recipient can accept a friend request");
                     return;
                 }
 
@@ -408,9 +387,8 @@ public class FriendController {
                 
                 sendJson(exchange, accepted ? 200 : 400, resp);
             } catch (Exception e) {
-                sendJson(exchange, 400, new JSONObject()
-                    .put("success", false)
-                    .put("message", "Invalid parameters: " + e.getMessage()));
+                Logger.error("FriendController", "Invalid parameters: " + e.getMessage(), e);
+                ErrorResponse.sendError(exchange, 400, "Invalid parameters: " + e.getMessage());
             }
         }
     }
@@ -422,7 +400,7 @@ public class FriendController {
     public static class DeclineFriendRequestHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            addCors(exchange);
+            ErrorResponse.addCorsHeaders(exchange);
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(200, -1);
                 return;
@@ -439,41 +417,33 @@ public class FriendController {
                 return;
             }
             
-            Map<String, String> query = parseQuery(exchange.getRequestURI());
+            Map<String, String> query = RequestUtils.parseQuery(exchange.getRequestURI());
             try {
                 String userId = query.getOrDefault("userId", "");
                 String friendId = query.getOrDefault("friendId", "");
 
                 if (userId.isEmpty() || friendId.isEmpty()) {
-                    sendJson(exchange, 400, new JSONObject()
-                        .put("success", false)
-                        .put("message", "userId and friendId are required"));
+                    ErrorResponse.sendError(exchange, 400, "userId and friendId are required");
                     return;
                 }
                 
                 // Verify user can only decline requests for themselves
                 if (!userId.equals(authenticatedUserId)) {
-                    sendJson(exchange, 403, new JSONObject()
-                        .put("success", false)
-                        .put("message", "Forbidden: Cannot decline friend requests for another user"));
+                    ErrorResponse.sendError(exchange, 403, "Forbidden: Cannot decline friend requests for another user");
                     return;
                 }
 
                 // Verify that current user (userId) is the recipient, not the requester
                 Friend friendship = friendService.getFriendship(userId, friendId);
                 if (friendship == null || !"pending".equals(friendship.getStatus())) {
-                    sendJson(exchange, 400, new JSONObject()
-                        .put("success", false)
-                        .put("message", "No pending friend request found"));
+                    ErrorResponse.sendError(exchange, 400, "No pending friend request found");
                     return;
                 }
                 
                 // Check if current user is the recipient (not the requester)
                 String requestedBy = friendship.getRequestedBy();
                 if (requestedBy == null || requestedBy.equals(userId)) {
-                    sendJson(exchange, 400, new JSONObject()
-                        .put("success", false)
-                        .put("message", "Only the recipient can decline a friend request"));
+                    ErrorResponse.sendError(exchange, 400, "Only the recipient can decline a friend request");
                     return;
                 }
 
@@ -487,9 +457,8 @@ public class FriendController {
                 
                 sendJson(exchange, declined ? 200 : 400, resp);
             } catch (Exception e) {
-                sendJson(exchange, 400, new JSONObject()
-                    .put("success", false)
-                    .put("message", "Invalid parameters: " + e.getMessage()));
+                Logger.error("FriendController", "Invalid parameters: " + e.getMessage(), e);
+                ErrorResponse.sendError(exchange, 400, "Invalid parameters: " + e.getMessage());
             }
         }
     }
@@ -501,7 +470,7 @@ public class FriendController {
     public static class ListPendingFriendRequestsHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            addCors(exchange);
+            ErrorResponse.addCorsHeaders(exchange);
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(200, -1);
                 return;
@@ -518,22 +487,18 @@ public class FriendController {
                 return;
             }
             
-            Map<String, String> query = parseQuery(exchange.getRequestURI());
+            Map<String, String> query = RequestUtils.parseQuery(exchange.getRequestURI());
             try {
                 String userId = query.getOrDefault("userId", "");
 
                 if (userId.isEmpty()) {
-                    sendJson(exchange, 400, new JSONObject()
-                        .put("success", false)
-                        .put("message", "userId is required"));
+                    ErrorResponse.sendError(exchange, 400, "userId is required");
                     return;
                 }
                 
                 // Verify user can only list their own pending requests
                 if (!userId.equals(authenticatedUserId)) {
-                    sendJson(exchange, 403, new JSONObject()
-                        .put("success", false)
-                        .put("message", "Forbidden: Cannot list pending requests for another user"));
+                    ErrorResponse.sendError(exchange, 403, "Forbidden: Cannot list pending requests for another user");
                     return;
                 }
 
@@ -574,44 +539,28 @@ public class FriendController {
                 
                 sendJson(exchange, 200, resp);
             } catch (Exception e) {
-                sendJson(exchange, 400, new JSONObject()
-                    .put("success", false)
-                    .put("message", "Invalid parameters: " + e.getMessage()));
+                Logger.error("FriendController", "Invalid parameters: " + e.getMessage(), e);
+                ErrorResponse.sendError(exchange, 400, "Invalid parameters: " + e.getMessage());
             }
         }
     }
 
+    // Deprecated - use RequestUtils.parseQuery() instead
+    @Deprecated
     private static Map<String, String> parseQuery(URI uri) {
-        String query = uri.getQuery();
-        if (query == null || query.isEmpty()) {
-            return Map.of();
-        }
-        return java.util.Arrays.stream(query.split("&"))
-                .map(kv -> kv.split("=", 2))
-                .collect(Collectors.toMap(
-                        kv -> kv[0],
-                        kv -> kv.length > 1 ? kv[1] : ""
-                ));
+        return RequestUtils.parseQuery(uri);
     }
 
+    // Deprecated - use ErrorResponse.addCorsHeaders() instead
+    @Deprecated
     private static void addCors(HttpExchange exchange) {
-        // In production, replace with specific allowed origins from environment variable
-        String allowedOrigin = System.getenv("ALLOWED_ORIGIN");
-        if (allowedOrigin == null || allowedOrigin.isEmpty()) {
-            allowedOrigin = "*"; // Default to wildcard for development
-        }
-        exchange.getResponseHeaders().add("Access-Control-Allow-Origin", allowedOrigin);
-        exchange.getResponseHeaders().add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        exchange.getResponseHeaders().add("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        ErrorResponse.addCorsHeaders(exchange);
     }
 
+    // Deprecated - use ErrorResponse.sendJson() instead
+    @Deprecated
     private static void sendJson(HttpExchange exchange, int status, JSONObject json) throws IOException {
-        byte[] bytes = json.toString().getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", "application/json");
-        exchange.sendResponseHeaders(status, bytes.length);
-        OutputStream os = exchange.getResponseBody();
-        os.write(bytes);
-        os.close();
+        ErrorResponse.sendJson(exchange, status, json);
     }
 }
 

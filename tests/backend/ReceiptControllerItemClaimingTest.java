@@ -1,19 +1,19 @@
 // Default package (no package declaration)
 
-import controllers.ReceiptController;
+import controllers.ReceiptItemController;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Unit tests for ReceiptController item claiming endpoints.
+ * Unit tests for ReceiptItemController item claiming endpoints.
  * Tests the ClaimItemHandler and GetItemAssignmentsHandler HTTP handlers.
  * 
- * NOTE: These tests are designed for the enhanced ReceiptController that includes:
+ * NOTE: These tests are designed for ReceiptItemController that includes:
  * - ClaimItemHandler (POST/DELETE /api/receipts/items/claim)
  * - GetItemAssignmentsHandler (GET /api/receipts/items/assignments)
  * 
- * When the stashed changes are applied, these tests will validate:
+ * These tests validate:
  * - Item claiming endpoint functionality
  * - Item unclaiming endpoint functionality
  * - Getting item assignments and owed amount
@@ -28,7 +28,7 @@ public class ReceiptControllerItemClaimingTest {
      * Test 1: Claim item endpoint structure
      * 
      * NOTE: This test documents the expected behavior of ClaimItemHandler.
-     * When ReceiptController.ClaimItemHandler is available, implement proper tests.
+     * ReceiptItemController.ClaimItemHandler is available and handles item claiming.
      * 
      * Expected behavior:
      * - POST /api/receipts/items/claim?receiptId=X&itemId=Y&userId=Z&quantity=1

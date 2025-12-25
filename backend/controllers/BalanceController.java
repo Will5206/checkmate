@@ -5,6 +5,8 @@ import com.sun.net.httpserver.HttpHandler;
 import services.BalanceService;
 import utils.AuthMiddleware;
 import utils.ErrorResponse;
+import utils.Logger;
+import utils.RequestUtils;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -27,7 +29,7 @@ public class BalanceController {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             // Add CORS headers
-            addCors(exchange);
+            ErrorResponse.addCorsHeaders(exchange);
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
                 exchange.sendResponseHeaders(200, -1);
                 return;
@@ -47,8 +49,7 @@ public class BalanceController {
 
             try {
                 // Parse query parameters
-                URI uri = exchange.getRequestURI();
-                Map<String, String> params = parseQueryParams(uri.getQuery());
+                Map<String, String> params = RequestUtils.parseQuery(exchange.getRequestURI());
 
                 String userId = params.get("userId");
 
@@ -71,28 +72,21 @@ public class BalanceController {
                 sendResponse(exchange, 200, jsonResponse);
 
             } catch (Exception e) {
-                System.err.println("Error getting balance: " + e.getMessage());
-                e.printStackTrace();
+                Logger.error("BalanceController", "Error getting balance: " + e.getMessage(), e);
                 ErrorResponse.sendError(exchange, 500, "Internal server error");
             }
         }
 
+        // Deprecated - use RequestUtils.parseQuery() instead
+        @Deprecated
         private Map<String, String> parseQueryParams(String query) {
-            Map<String, String> params = new HashMap<>();
-            if (query != null && !query.isEmpty()) {
-                String[] pairs = query.split("&");
-                for (String pair : pairs) {
-                    String[] keyValue = pair.split("=");
-                    if (keyValue.length == 2) {
-                        params.put(keyValue[0], keyValue[1]);
-                    }
-                }
-            }
-            return params;
+            return RequestUtils.parseQueryString(query);
         }
 
+        // Deprecated - use ErrorResponse.sendJson() instead
+        @Deprecated
         private void sendResponse(HttpExchange exchange, int statusCode, String response) throws IOException {
-            addCors(exchange);
+            ErrorResponse.addCorsHeaders(exchange);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.sendResponseHeaders(statusCode, response.getBytes().length);
             OutputStream os = exchange.getResponseBody();
@@ -100,15 +94,10 @@ public class BalanceController {
             os.close();
         }
         
+        // Deprecated - use ErrorResponse.addCorsHeaders() instead
+        @Deprecated
         private void addCors(HttpExchange exchange) {
-            // In production, replace with specific allowed origins
-            String allowedOrigin = System.getenv("ALLOWED_ORIGIN");
-            if (allowedOrigin == null || allowedOrigin.isEmpty()) {
-                allowedOrigin = "*"; // Default to wildcard for development
-            }
-            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", allowedOrigin);
-            exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-            exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+            ErrorResponse.addCorsHeaders(exchange);
         }
     }
 

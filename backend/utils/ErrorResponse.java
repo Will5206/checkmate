@@ -38,14 +38,10 @@ public class ErrorResponse {
     }
     
     /**
-     * Send a JSON response with proper CORS headers
-     * @param exchange HttpExchange to send response to
-     * @param statusCode HTTP status code
-     * @param json JSONObject to send
-     * @throws IOException if response cannot be sent
+     * Add CORS headers to an HttpExchange
+     * @param exchange The HttpExchange to add headers to
      */
-    public static void sendJson(HttpExchange exchange, int statusCode, JSONObject json) throws IOException {
-        // Set CORS headers
+    public static void addCorsHeaders(HttpExchange exchange) {
         String allowedOrigin = System.getenv("ALLOWED_ORIGIN");
         if (allowedOrigin == null || allowedOrigin.isEmpty()) {
             allowedOrigin = "*"; // Default to wildcard for development
@@ -53,6 +49,17 @@ public class ErrorResponse {
         exchange.getResponseHeaders().set("Access-Control-Allow-Origin", allowedOrigin);
         exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
         exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    }
+    
+    /**
+     * Send a JSON response with proper CORS headers
+     * @param exchange HttpExchange to send response to
+     * @param statusCode HTTP status code
+     * @param json JSONObject to send
+     * @throws IOException if response cannot be sent
+     */
+    public static void sendJson(HttpExchange exchange, int statusCode, JSONObject json) throws IOException {
+        addCorsHeaders(exchange);
         
         // Set content type
         exchange.getResponseHeaders().set("Content-Type", "application/json");

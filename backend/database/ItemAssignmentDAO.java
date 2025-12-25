@@ -1,5 +1,6 @@
 package database;
 
+import models.ReceiptItem;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -564,6 +565,98 @@ public class ItemAssignmentDAO {
             }
         }
         return 0;
+    }
+
+    /**
+     * Get item claim info (item details + claimed quantities).
+     * Returns an ItemClaimInfo object containing the item, user's claimed quantity, and total claimed quantity.
+     * 
+     * @param itemId The item ID
+     * @param userId The user ID
+     * @return ItemClaimInfo object, or null if item not found
+     */
+    public ReceiptDAO.ItemClaimInfo getItemClaimInfo(int itemId, String userId) {
+        System.out.println("[ItemAssignmentDAO] 🔵 STEP 1: getItemClaimInfo called for itemId=" + itemId + ", userId=" + userId);
+        
+        // Get item info and claimed quantities in a single query
+        String sql = "SELECT " +
+                     "  ri.item_id, ri.receipt_id, ri.name, ri.price, ri.quantity as item_quantity, ri.category, " +
+                     "  (SELECT COALESCE(SUM(quantity), 0) FROM item_assignments WHERE item_id = ? AND user_id = ?) as user_claimed_qty, " +
+                     "  (SELECT COALESCE(SUM(quantity), 0) FROM item_assignments WHERE item_id = ?) as total_claimed_qty " +
+                     "FROM receipt_items ri " +
+                     "WHERE ri.item_id = ?";
+        
+        System.out.println("[ItemAssignmentDAO] 🔵 STEP 2: SQL query prepared");
+        
+        try (Connection conn = dbConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+            
+            System.out.println("[ItemAssignmentDAO] 🔵 STEP 3: Connection obtained, setting parameters...");
+            // Set parameters: itemId for user query, userId, itemId for total query, itemId for WHERE
+            pstmt.setInt(1, itemId);  // user_claimed_qty subquery item_id
+            pstmt.setString(2, userId); // user_claimed_qty subquery user_id
+            pstmt.setInt(3, itemId);  // total_claimed_qty subquery item_id
+            pstmt.setInt(4, itemId);  // main WHERE clause item_id
+            
+            System.out.println("[ItemAssignmentDAO] 🔵 STEP 4: Executing query...");
+            
+            try (ResultSet rs = pstmt.executeQuery()) {
+                System.out.println("[ItemAssignmentDAO] 🔵 STEP 5: Query executed, checking results...");
+                
+                if (rs.next()) {
+                    System.out.println("[ItemAssignmentDAO] 🔵 STEP 6: ResultSet has data, reading columns...");
+                    
+                    // Build ReceiptItem from result
+                    int itemIdFromDb = rs.getInt("item_id");
+                    int receiptId = rs.getInt("receipt_id");
+                    String name = rs.getString("name");
+                    java.math.BigDecimal price = rs.getBigDecimal("price");
+                    int itemQuantity = rs.getInt("item_quantity");
+                    String category = rs.getString("category");
+                    
+                    System.out.println("[ItemAssignmentDAO] 🔵 STEP 7: Read item columns - itemId=" + itemIdFromDb + ", name=" + name + ", price=" + price);
+                    
+                    // Read quantity columns
+                    int userClaimedQty = rs.getInt("user_claimed_qty");
+                    int totalClaimedQty = rs.getInt("total_claimed_qty");
+                    
+                    System.out.println("[ItemAssignmentDAO] 🔵 STEP 8: Read quantity columns - userClaimedQty=" + userClaimedQty + ", totalClaimedQty=" + totalClaimedQty);
+                    
+                    // Validate we got valid data
+                    if (price == null) {
+                        System.err.println("[ItemAssignmentDAO] 🔴 ERROR: price is NULL for itemId=" + itemId);
+                        return null;
+                    }
+                    
+                    ReceiptItem item = new ReceiptItem(
+                        itemIdFromDb,
+                        receiptId,
+                        name,
+                        price.floatValue(),
+                        itemQuantity,
+                        category
+                    );
+                    
+                    System.out.println("[ItemAssignmentDAO] ✅ STEP 9: ItemClaimInfo created successfully");
+                    return new ReceiptDAO.ItemClaimInfo(item, userClaimedQty, totalClaimedQty);
+                    
+                } else {
+                    System.out.println("[ItemAssignmentDAO] 🔴 STEP 6: ResultSet is empty - item not found");
+                    return null;
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("[ItemAssignmentDAO] 🔴 ERROR: SQLException in getItemClaimInfo: " + e.getMessage());
+            System.err.println("[ItemAssignmentDAO] 🔴 ERROR: SQL State: " + e.getSQLState());
+            System.err.println("[ItemAssignmentDAO] 🔴 ERROR: Error Code: " + e.getErrorCode());
+            e.printStackTrace();
+            return null;
+        } catch (Exception e) {
+            System.err.println("[ItemAssignmentDAO] 🔴 ERROR: Unexpected exception in getItemClaimInfo: " + e.getMessage());
+            System.err.println("[ItemAssignmentDAO] 🔴 ERROR: Exception type: " + e.getClass().getName());
+            e.printStackTrace();
+            return null;
+        }
     }
 }
 
